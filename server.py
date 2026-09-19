@@ -298,8 +298,26 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
         if path in ("/api/refresh", "/api/refresh-source"):
             return self.handle_post_refresh()
+        elif path == "/api/enrich/geoloc":
+            return self.handle_post_enrich_geoloc()
 
         self._send_json({"error": "Endpoint not found"}, status_code=404)
+
+    def handle_post_enrich_geoloc(self):
+        """Déclenche l'enrichissement haute précision EXIF / REFIL / Cadastre en arrière-plan."""
+        def _bg_enrich():
+            global _CACHED_LISTINGS_PAYLOAD
+            try:
+                from src.analysis.geo_precision_enricher import GeoPrecisionEnricher
+                enricher = GeoPrecisionEnricher()
+                res = enricher.enrich_database_table(max_exif_downloads=50)
+                logger.info(f"Enrichissement haute précision terminé : {res}")
+                _CACHED_LISTINGS_PAYLOAD = None
+            except Exception as ex:
+                logger.error(f"Erreur enrichissement geo background : {ex}")
+
+        threading.Thread(target=_bg_enrich, daemon=True).start()
+        self._send_json({"success": True, "message": "Enrichissement haute précision lancé en arrière-plan"})
 
     def handle_get_listings(self):
         """Renvoie les annonces réelles stockées dans DuckDB formatées pour le frontend."""
@@ -634,6 +652,52 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 if row.get("has_air_conditioning"):
                     features.append("Climatisé")
 
+                # Géolocalisation haute précision et datation des photos
+                lat_p = safe_float(row.get("lat_precise"), None)
+                lon_p = safe_float(row.get("lon_precise"), None)
+                final_lat = lat_p if (lat_p is not None and lat_p != 0.0) else lat_val
+                final_lon = lon_p if (lon_p is not None and lon_p != 0.0) else lon_val
+
+                prec_score = safe_int(row.get("precision_score"), 40)
+                prec_level = str(row.get("precision_level") or "QUARTIER_DEFAULT")
+                prec_detail = str(row.get("precision_detail") or f"Approximation secteur {quartier}")
+
+                if prec_score >= 95 or prec_level == "METRIQUE_GPS":
+                    prec_badge = "🟢 95% GPS Photo"
+                    prec_badge_class = "border-emerald-500/40 text-emerald-400 bg-emerald-950/40"
+                    prec_dot = "bg-emerald-400"
+                elif prec_score >= 80 or prec_level == "IMMEUBLE_REFIL":
+                    prec_badge = f"🔵 {prec_score}% Immeuble REFIL"
+                    prec_badge_class = "border-blue-500/40 text-blue-400 bg-blue-950/40"
+                    prec_dot = "bg-blue-400"
+                elif prec_score >= 65 or prec_level == "LOT_CADASTRE":
+                    prec_badge = f"🟣 {prec_score}% Lot Cadastre"
+                    prec_badge_class = "border-purple-500/40 text-purple-400 bg-purple-950/40"
+                    prec_dot = "bg-purple-400"
+                else:
+                    prec_badge = f"⚪ {prec_score}% Secteur Quartier"
+                    prec_badge_class = "border-slate-600/40 text-slate-300 bg-slate-800/40"
+                    prec_dot = "bg-slate-400"
+
+                raw_photo_dt = row.get("photo_date_taken")
+                photo_date_str = None
+                if pd.notna(raw_photo_dt) and raw_photo_dt:
+                    try:
+                        photo_date_str = pd.to_datetime(raw_photo_dt).strftime("%d/%m/%Y")
+                    except Exception:
+                        photo_date_str = str(raw_photo_dt)[:10]
+
+                photo_age_m = safe_int(row.get("photo_age_months"), None)
+                photo_badge = None
+                if photo_date_str:
+                    if photo_age_m is not None and photo_age_m >= 12:
+                        years = photo_age_m // 12
+                        photo_badge = f"📷 Photo d'il y a {years} an{'s' if years > 1 else ''} ({photo_date_str})"
+                    elif photo_age_m is not None and photo_age_m >= 6:
+                        photo_badge = f"📷 Photo d'il y a {photo_age_m} mois ({photo_date_str})"
+                    else:
+                        photo_badge = f"📷 Prise le {photo_date_str}"
+
                 listings.append({
                     "id": str(row.get("id")),
                     "title": str(row.get("title")),
@@ -646,8 +710,19 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "furnishedLabel": furnished_label,
                     "commune": commune_raw,
                     "quartier": quartier,
-                    "lat": lat_val,
-                    "lon": lon_val,
+                    "lat": final_lat,
+                    "lon": final_lon,
+                    "latPrecise": lat_p,
+                    "lonPrecise": lon_p,
+                    "precisionScore": prec_score,
+                    "precisionLevel": prec_level,
+                    "precisionDetail": prec_detail,
+                    "precisionBadge": prec_badge,
+                    "precisionBadgeClass": prec_badge_class,
+                    "precisionDot": prec_dot,
+                    "photoDateTaken": photo_date_str,
+                    "photoAgeMonths": photo_age_m,
+                    "photoBadge": photo_badge,
                     "currentPrice": price_xpf,
                     "initialPrice": init_price_xpf,
                     "lastUpdateDate": last_update_date,

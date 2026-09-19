@@ -72,6 +72,13 @@ class PropertyDatabase:
             ALTER TABLE listings ADD COLUMN IF NOT EXISTS initial_price_xpf BIGINT;
             ALTER TABLE listings ADD COLUMN IF NOT EXISTS first_seen_at TIMESTAMP;
             ALTER TABLE listings ADD COLUMN IF NOT EXISTS last_price_change_at TIMESTAMP;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS lat_precise DOUBLE;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS lon_precise DOUBLE;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS precision_score INTEGER;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS precision_level VARCHAR;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS precision_detail VARCHAR;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_date_taken TIMESTAMP;
+            ALTER TABLE listings ADD COLUMN IF NOT EXISTS photo_age_months INTEGER;
 
             -- Table dédiée à l'historique complet des variations de prix
             CREATE TABLE IF NOT EXISTS listing_price_history (
@@ -170,6 +177,13 @@ class PropertyDatabase:
                 "published_at": l.published_at,
                 "scraped_at": l.scraped_at,
                 "is_active": l.is_active,
+                "lat_precise": getattr(l, "lat_precise", None),
+                "lon_precise": getattr(l, "lon_precise", None),
+                "precision_score": getattr(l, "precision_score", None),
+                "precision_level": getattr(l, "precision_level", None),
+                "precision_detail": getattr(l, "precision_detail", None),
+                "photo_date_taken": getattr(l, "photo_date_taken", None),
+                "photo_age_months": getattr(l, "photo_age_months", None),
             })
 
         df = pd.DataFrame(records)
@@ -268,7 +282,14 @@ class PropertyDatabase:
                 image_url = COALESCE(EXCLUDED.image_url, listings.image_url),
                 images_json = COALESCE(EXCLUDED.images_json, listings.images_json),
                 scraped_at = EXCLUDED.scraped_at,
-                is_active = EXCLUDED.is_active;
+                is_active = EXCLUDED.is_active,
+                lat_precise = COALESCE(EXCLUDED.lat_precise, listings.lat_precise),
+                lon_precise = COALESCE(EXCLUDED.lon_precise, listings.lon_precise),
+                precision_score = COALESCE(EXCLUDED.precision_score, listings.precision_score),
+                precision_level = COALESCE(EXCLUDED.precision_level, listings.precision_level),
+                precision_detail = COALESCE(EXCLUDED.precision_detail, listings.precision_detail),
+                photo_date_taken = COALESCE(EXCLUDED.photo_date_taken, listings.photo_date_taken),
+                photo_age_months = COALESCE(EXCLUDED.photo_age_months, listings.photo_age_months);
             """)
 
     def query(self, sql: str) -> pd.DataFrame:

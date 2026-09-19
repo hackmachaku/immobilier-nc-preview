@@ -348,8 +348,18 @@
             <option value="manual">✍️ Saisies manuelles</option>
           </select>
 
+          <!-- FILTRE PRÉCISION GÉOGRAPHIQUE HAUTE FIDÉLITÉ -->
+          <select id="precisionFilter" onchange="filterListings()" class="px-3 py-1.5 rounded-lg bg-emerald-950/40 border border-emerald-500/40 text-xs text-emerald-200 font-semibold focus:outline-none focus:ring-1 focus:ring-emerald-400">
+            <option value="all">🎯 Toute précision géo</option>
+            <option value="high">🟢 Haute précision (≥ 80% REFIL / GPS)</option>
+            <option value="gps">🟢 Certifié GPS Photo (95%)</option>
+            <option value="refil">🔵 Immeuble REFIL (85%)</option>
+            <option value="lot">🟣 Lot Cadastre (70%)</option>
+          </select>
+
           <select id="sortFilter" onchange="filterListings()" class="px-3 py-1.5 rounded-lg bg-slate-800 border border-[var(--border)] text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500">
             <option value="date_desc">Plus récents d'abord</option>
+            <option value="precision_desc">🎯 Précision géo (GPS & REFIL)</option>
             <option value="price_asc">Prix croissant</option>
             <option value="price_desc">Prix décroissant</option>
             <option value="drop_desc">Plus forte baisse (%)</option>
@@ -2471,6 +2481,7 @@
       const furnished = document.getElementById('furnishedFilter')?.value || 'all';
       const agency = normStr(document.getElementById('agencyFilter')?.value);
       const opportunity = document.getElementById('opportunityFilter')?.value || 'all';
+      const precision = document.getElementById('precisionFilter')?.value || 'all';
       const sort = document.getElementById('sortFilter')?.value || 'date_desc';
 
       updateKpiActiveStyles(opportunity);
@@ -2510,6 +2521,21 @@
           matchesOpp = item.isManual === true;
         }
 
+        let matchesPrecision = true;
+        if (precision !== 'all') {
+          const score = item.precisionScore || 40;
+          const level = item.precisionLevel || 'QUARTIER_DEFAULT';
+          if (precision === 'high') {
+            matchesPrecision = score >= 80 || level === 'METRIQUE_GPS' || level === 'IMMEUBLE_REFIL';
+          } else if (precision === 'gps') {
+            matchesPrecision = score >= 95 || level === 'METRIQUE_GPS';
+          } else if (precision === 'refil') {
+            matchesPrecision = level === 'IMMEUBLE_REFIL';
+          } else if (precision === 'lot') {
+            matchesPrecision = level === 'LOT_CADASTRE' || (item.cadastreLot && item.cadastreLot.length > 0);
+          }
+        }
+
         const matchesSearch = !search || 
           normStr(item.title).includes(search) || 
           normStr(item.quartier).includes(search) || 
@@ -2530,7 +2556,7 @@
           }
         }
 
-        return matchesCategory && matchesCommune && matchesTransaction && matchesAgency && matchesRoomType && matchesFurnished && matchesOpp && matchesSearch && matchesPrice;
+        return matchesCategory && matchesCommune && matchesTransaction && matchesAgency && matchesRoomType && matchesFurnished && matchesOpp && matchesPrecision && matchesSearch && matchesPrice;
       });
 
       // Gestion de la bannière active KPI
@@ -2564,6 +2590,9 @@
       }
 
       filtered.sort((a, b) => {
+        if (sort === 'precision_desc') {
+          return (b.precisionScore || 40) - (a.precisionScore || 40);
+        }
         if (sort === 'price_asc') return a.currentPrice - b.currentPrice;
         if (sort === 'price_desc') return b.currentPrice - a.currentPrice;
         if (sort === 'drop_desc') {
@@ -2837,6 +2866,11 @@
                   ${categoryTag}
                   ${roomBadge}
                   ${furnishedBadge}
+                  ${item.precisionBadge ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md shadow-md ${item.precisionBadgeClass || 'border-slate-600/40 text-slate-300 bg-slate-800/40'}" title="${item.precisionDetail || ''}">
+                      ${item.precisionBadge}
+                    </span>
+                  ` : ''}
                 </div>
                 <!-- Badge prix / statut : ancré à droite, largeur maîtrisée -->
                 <div class="shrink-0 pointer-events-auto ml-1">
@@ -2851,9 +2885,16 @@
                     <svg class="w-3.5 h-3.5 text-sky-400 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/></svg>
                     <span class="font-medium truncate">${item.commune} • ${item.quartier}</span>
                   </div>
-                  <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ageColor} shrink-0 backdrop-blur-md shadow-md pointer-events-auto">
-                    ⏱️ ${item.daysOnMarket}j
-                  </span>
+                  <div class="flex items-center gap-1.5 shrink-0 pointer-events-auto">
+                    ${item.photoBadge ? `
+                      <span class="px-1.5 py-0.5 rounded text-[9.5px] font-medium border border-slate-700/60 bg-slate-900/80 text-slate-300 backdrop-blur-md shadow-md" title="Date constatée du visuel">
+                        ${item.photoBadge}
+                      </span>
+                    ` : ''}
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-semibold border ${ageColor} shrink-0 backdrop-blur-md shadow-md">
+                      ⏱️ ${item.daysOnMarket}j
+                    </span>
+                  </div>
                 </div>
                 <h3 class="font-bold text-base line-clamp-1 mt-1 text-white drop-shadow-md pointer-events-auto">${item.title}</h3>
               </div>
@@ -2928,6 +2969,17 @@
                         🏢 ${item.refilNom}${item.refilLivraison ? ' (' + item.refilLivraison + ')' : ''}
                       </span>
                     ` : ''}
+                  </div>
+                ` : ''}
+
+                <!-- PRECISION DETAIL AUDIT ROW -->
+                ${item.precisionDetail ? `
+                  <div class="mt-1.5 text-[10.5px] text-slate-300 flex items-center justify-between gap-1 bg-slate-900/50 px-2 py-1 rounded border border-slate-800/80" title="${item.precisionDetail}">
+                    <span class="flex items-center gap-1.5 truncate">
+                      <span class="w-2 h-2 rounded-full ${item.precisionDot || 'bg-slate-400'} shrink-0"></span>
+                      <span class="truncate">${item.precisionDetail}</span>
+                    </span>
+                    <span class="font-bold text-sky-400 shrink-0 text-[10px]">${item.precisionScore ? item.precisionScore + '%' : ''}</span>
                   </div>
                 ` : ''}
 
@@ -3277,6 +3329,73 @@
           <div>
             <h4 class="text-sm font-bold text-white mb-2">Description complète du bien</h4>
             <p class="text-xs sm:text-sm text-slate-300 leading-relaxed bg-slate-900/50 p-4 rounded-xl border border-slate-800 whitespace-pre-line">${item.description}</p>
+          </div>
+
+          <!-- BLOC AUDIT DE GÉOLOCALISATION HAUTE PRÉCISION & DATATION DES PHOTOS -->
+          <div class="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border ${item.precisionScore >= 80 ? 'border-emerald-500/40' : 'border-sky-500/30'} space-y-4 shadow-lg">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-slate-800">
+              <div class="flex items-center gap-2.5">
+                <div class="w-8 h-8 rounded-lg ${item.precisionScore >= 95 ? 'bg-emerald-500/20 text-emerald-400' : (item.precisionScore >= 80 ? 'bg-blue-500/20 text-blue-400' : 'bg-slate-800 text-slate-300')} flex items-center justify-center font-bold text-base shadow-inner">
+                  🎯
+                </div>
+                <div>
+                  <h4 class="text-sm font-bold text-white flex items-center gap-2">
+                    Audit de Géolocalisation & Datation des Photos
+                    <span class="px-2 py-0.5 rounded text-[10px] font-bold ${item.precisionBadgeClass || 'bg-slate-800 text-slate-300 border border-slate-700'}">
+                      ${item.precisionBadge || 'Précision Standard'}
+                    </span>
+                  </h4>
+                  <p class="text-[11px] text-slate-400">Croisement multi-sources : EXIF GPS natif, NLP REFIL DITTT et Référentiel Cadastral NC</p>
+                </div>
+              </div>
+              <div class="flex items-center gap-2">
+                <div class="text-right">
+                  <div class="text-xs font-bold text-white">Score de Précision : <span class="${item.precisionScore >= 80 ? 'text-emerald-400' : (item.precisionScore >= 65 ? 'text-purple-400' : 'text-slate-300')}">${item.precisionScore || 40}%</span></div>
+                  <div class="w-28 bg-slate-800 rounded-full h-1.5 mt-1 overflow-hidden">
+                    <div class="h-1.5 rounded-full ${item.precisionScore >= 80 ? 'bg-emerald-500' : (item.precisionScore >= 65 ? 'bg-purple-500' : 'bg-slate-500')}" style="width: ${item.precisionScore || 40}%"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+              <!-- Source & Niveau de Localisation -->
+              <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5">
+                <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Méthode de Positionnement</span>
+                <div class="flex items-center gap-2 font-bold text-white text-sm">
+                  <span class="w-2.5 h-2.5 rounded-full ${item.precisionDot || 'bg-slate-400'} shrink-0"></span>
+                  <span>${item.precisionLevel === 'METRIQUE_GPS' ? 'Position Métrique Certifiée (GPS Photo)' : (item.precisionLevel === 'IMMEUBLE_REFIL' ? 'Immeuble / Copropriété REFIL DITTT' : (item.precisionLevel === 'LOT_CADASTRE' ? 'Parcelle / Lot Cadastral' : 'Approximation Secteur / Quartier'))}</span>
+                </div>
+                <p class="text-[11.5px] text-slate-300">${item.precisionDetail || 'Positionnement par défaut au centre du quartier.'}</p>
+                <div class="text-[10.5px] text-sky-400 font-mono pt-1">
+                  GPS : ${item.lat ? item.lat.toFixed(6) : 'N/C'}, ${item.lon ? item.lon.toFixed(6) : 'N/C'}
+                </div>
+              </div>
+
+              <!-- Datation des Photos & Fraîcheur -->
+              <div class="p-3.5 rounded-xl bg-slate-900/80 border border-slate-800 space-y-1.5">
+                <span class="text-[10px] text-slate-400 font-semibold uppercase tracking-wider block">Traçabilité Temporelle des Visuels</span>
+                <div class="flex items-center gap-2 font-bold text-white text-sm">
+                  <span>📷 ${item.photoDateTaken ? 'Date de la Photo : ' + item.photoDateTaken : 'Date Photo Non Disponible'}</span>
+                </div>
+                ${item.photoAgeMonths !== null && item.photoAgeMonths !== undefined ? `
+                  <div class="text-[11.5px] ${item.photoAgeMonths >= 12 ? 'text-amber-300' : (item.photoAgeMonths >= 6 ? 'text-sky-300' : 'text-emerald-300')} flex items-center gap-1.5">
+                    ${item.photoAgeMonths >= 12 ? `
+                      <span>⚠️ Visuels datant d'environ <strong>${Math.floor(item.photoAgeMonths / 12)} an(s)</strong>. L'état actuel du bien peut différer des photos.</span>
+                    ` : (item.photoAgeMonths >= 6 ? `
+                      <span>ℹ️ Clichés pris il y a environ <strong>${item.photoAgeMonths} mois</strong>.</span>
+                    ` : `
+                      <span>✅ Photos récentes (prises il y a moins de 6 mois).</span>
+                    `)}
+                  </div>
+                ` : `
+                  <p class="text-[11.5px] text-slate-400">Métadonnées d'horodatage non conservées par la plateforme source.</p>
+                `}
+                <div class="text-[10px] text-slate-400 pt-1">
+                  Mise en ligne annonce : il y a ${item.daysOnMarket || 0} jour(s)
+                </div>
+              </div>
+            </div>
           </div>
 
           <!-- BLOC FONCIER, CADASTRE & URBANISME OFFICIEL (GOUV NC) -->
@@ -4107,6 +4226,12 @@
                 <span>~${priceEur}</span>
               </div>
             </div>
+            ${item.precisionBadge ? `
+              <div style="font-size: 10px; display: flex; justify-content: space-between; align-items: center; background: rgba(15, 23, 42, 0.7); border: 1px solid ${item.precisionScore >= 80 ? 'rgba(16, 185, 129, 0.4)' : 'rgba(56, 189, 248, 0.25)'}; border-radius: 6px; padding: 3px 6px; margin-bottom: 6px;">
+                <span style="font-weight: 700; color: ${item.precisionScore >= 95 ? '#34d399' : (item.precisionScore >= 80 ? '#60a5fa' : (item.precisionScore >= 65 ? '#c084fc' : '#cbd5e1'))};">${item.precisionBadge}</span>
+                <span style="font-size: 9px; color: #94a3b8;">${item.photoBadge || ''}</span>
+              </div>
+            ` : ''}
             ${(item.cadastreNic || item.cadastre_nic) ? `
               <div style="font-size: 10px; color: #38bdf8; background: rgba(14, 165, 233, 0.12); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 6px; padding: 4px 6px; margin-bottom: 6px;">
                 <div style="font-weight: 700; display: flex; align-items: center; gap: 4px;">
@@ -4144,11 +4269,12 @@
           </div>
         `;
 
+        const isHighPrecision = Boolean(item.precisionScore && item.precisionScore >= 80);
         const marker = L.circleMarker([item.lat, item.lon], {
-          radius: isLoc ? 6.5 : 7.5,
+          radius: isLoc ? (isHighPrecision ? 7.5 : 6.5) : (isHighPrecision ? 8.5 : 7.5),
           fillColor: markerColor,
-          color: '#ffffff',
-          weight: 1.5,
+          color: isHighPrecision ? '#10b981' : '#ffffff',
+          weight: isHighPrecision ? 2.5 : 1.5,
           opacity: 0.95,
           fillOpacity: 0.85
         });

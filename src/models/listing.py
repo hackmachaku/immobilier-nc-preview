@@ -100,6 +100,15 @@ class CleanedListing(BaseModel):
     scraped_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     is_active: bool = True
 
+    # Géolocalisation haute précision & Datation photos
+    lat_precise: Optional[float] = None
+    lon_precise: Optional[float] = None
+    precision_score: Optional[int] = None
+    precision_level: Optional[str] = None
+    precision_detail: Optional[str] = None
+    photo_date_taken: Optional[datetime] = None
+    photo_age_months: Optional[int] = None
+
     @computed_field
     @property
     def price_eur(self) -> float:
