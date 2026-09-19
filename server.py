@@ -830,6 +830,25 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
             features = data.get("features", [])
             if not features:
+                # Fallback avec tolérance de 35 mètres (utile si coordonnées en bordure ou sur la voirie)
+                arcgis_url_dist = (
+                    "https://cadastre.gouv.nc/arcgisServices/cadastreV3/cadastre_consult_v333/MapServer/7/query?"
+                    f"geometry={lon}%2C{lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects"
+                    "&distance=35&units=esriSRUnit_Meter"
+                    "&outFields=*&returnGeometry=true&outSR=4326&f=json"
+                )
+                try:
+                    req_dist = urllib.request.Request(arcgis_url_dist, headers={
+                        "User-Agent": "Mozilla/5.0",
+                        "Referer": "https://cadastre.gouv.nc/"
+                    })
+                    with urllib.request.urlopen(req_dist, context=ctx, timeout=8) as resp_dist:
+                        data_dist = json.loads(resp_dist.read().decode("utf-8"))
+                    features = data_dist.get("features", [])
+                except Exception as dist_err:
+                    logger.debug(f"Notice fallback distance parcel query: {dist_err}")
+
+            if not features:
                 res = {"success": True, "found": False, "polygon": None}
                 PARCEL_POLYGON_CACHE[cache_key] = res
                 return self._send_json(res)

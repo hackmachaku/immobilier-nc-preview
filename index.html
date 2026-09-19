@@ -3911,7 +3911,7 @@
         }
       });
       updateMapLegend();
-      renderMapMarkers();
+      renderMapMarkers(true);
     }
 
     function toggleMapQuartiers() {
@@ -4016,12 +4016,26 @@
     function viewOnMapAndTrace(lat, lon) {
       closeDetailModal();
       switchTab('carte');
-      if (leafletMapInstance) {
-        leafletMapInstance.setView([lat, lon], 17);
-        setTimeout(() => {
-          showCadastreParcelPolygon(lat, lon);
-        }, 200);
-      }
+      
+      const doTrace = () => {
+        if (leafletMapInstance) {
+          leafletMapInstance.invalidateSize();
+          leafletMapInstance.setView([lat, lon], 17);
+          setTimeout(() => {
+            showCadastreParcelPolygon(lat, lon, true);
+          }, 250);
+        } else {
+          initLeafletMap();
+          setTimeout(() => {
+            if (leafletMapInstance) {
+              leafletMapInstance.setView([lat, lon], 17);
+              showCadastreParcelPolygon(lat, lon, true);
+            }
+          }, 350);
+        }
+      };
+
+      setTimeout(doTrace, 150);
     }
 
     function initLeafletMap() {
@@ -4114,9 +4128,10 @@
       }
     }
 
-    async function showCadastreParcelPolygon(lat, lon) {
-      clearCadastreParcelPolygon();
+    async function showCadastreParcelPolygon(lat, lon, zoomTo = true) {
       if (!lat || !lon || !leafletMapInstance) return;
+
+      showNotificationToast('🏛️ Cadastre Officiel', 'Recherche du contour officiel de la parcelle...', 'info', 2500);
 
       let geojsonPolygon = null;
       let parcelInfo = null;
@@ -4138,33 +4153,48 @@
         try {
           const arcgisUrl = `https://cadastre.gouv.nc/arcgisServices/cadastreV3/cadastre_consult_v333/MapServer/7/query?geometry=${lon}%2C${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=*&returnGeometry=true&outSR=4326&f=json`;
           const res = await fetch(arcgisUrl);
+          let feat = null;
           if (res.ok) {
             const data = await res.json();
-            const feat = data && data.features && data.features[0];
-            if (feat && feat.geometry && feat.geometry.rings) {
-              const attrs = feat.attributes || {};
-              const nic = attrs['cadastre.sde_cadastre_adm.f_parc_active.nic_graphique'] || attrs['cadastre.cadastre_app.parcel.ref'] || '';
-              const lot = attrs['cadastre.cadastre_app.parcel.lot_number'] || '';
-              const lotissement = attrs['cadastre.cadastre_app.parcel.allotment_name'] || '';
-              const area = Math.round(attrs['cadastre.sde_cadastre_adm.f_parc_active.st_area(shape)'] || 0);
+            feat = data && data.features && data.features[0];
+          }
 
-              geojsonPolygon = {
-                type: "Feature",
-                properties: { nic, lot, lotissement, surfaceM2: area },
-                geometry: {
-                  type: "Polygon",
-                  coordinates: feat.geometry.rings
-                }
-              };
-              parcelInfo = geojsonPolygon.properties;
+          if (!feat) {
+            // Deuxième essai avec tolérance spatiale (distance 35m) si point en bordure de parcelle ou sur voirie
+            const arcgisDistUrl = `https://cadastre.gouv.nc/arcgisServices/cadastreV3/cadastre_consult_v333/MapServer/7/query?geometry=${lon}%2C${lat}&geometryType=esriGeometryPoint&inSR=4326&spatialRel=esriSpatialRelIntersects&distance=35&units=esriSRUnit_Meter&outFields=*&returnGeometry=true&outSR=4326&f=json`;
+            const resDist = await fetch(arcgisDistUrl);
+            if (resDist.ok) {
+              const dataDist = await resDist.json();
+              feat = dataDist && dataDist.features && dataDist.features[0];
             }
+          }
+
+          if (feat && feat.geometry && feat.geometry.rings) {
+            const attrs = feat.attributes || {};
+            const nic = attrs['cadastre.sde_cadastre_adm.f_parc_active.nic_graphique'] || attrs['cadastre.cadastre_app.parcel.ref'] || '';
+            const lot = attrs['cadastre.cadastre_app.parcel.lot_number'] || '';
+            const lotissement = attrs['cadastre.cadastre_app.parcel.allotment_name'] || '';
+            const area = Math.round(attrs['cadastre.sde_cadastre_adm.f_parc_active.st_area(shape)'] || 0);
+
+            geojsonPolygon = {
+              type: "Feature",
+              properties: { nic, lot, lotissement, surfaceM2: area },
+              geometry: {
+                type: "Polygon",
+                coordinates: feat.geometry.rings
+              }
+            };
+            parcelInfo = geojsonPolygon.properties;
           }
         } catch(e) {
           console.warn("Notice fetch direct cadastre.gouv.nc :", e);
         }
       }
 
-      if (!geojsonPolygon) return;
+      if (!geojsonPolygon) {
+        showNotificationToast('Cadastre', 'Aucun contour parcellaire officiel trouvé à cet emplacement immédiat.', 'error', 4500);
+        return;
+      }
 
       clearCadastreParcelPolygon();
 
@@ -4189,26 +4219,35 @@
       });
 
       currentParcelPolygonLayer.addTo(leafletMapInstance);
+      if (currentParcelPolygonLayer.bringToFront) {
+        currentParcelPolygonLayer.bringToFront();
+      }
 
       // Zoom et centrage automatique précis sur la parcelle
-      try {
-        const bounds = currentParcelPolygonLayer.getBounds();
-        if (bounds && bounds.isValid()) {
-          leafletMapInstance.flyToBounds(bounds, {
-            padding: [120, 120],
-            maxZoom: 18,
-            duration: 0.6
-          });
+      if (zoomTo) {
+        try {
+          const bounds = currentParcelPolygonLayer.getBounds();
+          if (bounds && bounds.isValid()) {
+            leafletMapInstance.flyToBounds(bounds, {
+              padding: [100, 100],
+              maxZoom: 18,
+              duration: 0.6
+            });
+          }
+        } catch(e) {
+          console.debug('FlyToBounds notice:', e);
         }
-      } catch(e) {
-        console.debug('FlyToBounds notice:', e);
       }
+
+      showNotificationToast('🏛️ Parcelle Délimitée', `Contour officiel tracé avec succès !\n${lotLabel}${surfLabel}`, 'success', 5000);
     }
 
-    function renderMapMarkers() {
+    function renderMapMarkers(clearPolygon = false) {
       if (!leafletMapInstance || !mapMarkersGroup) return;
 
-      clearCadastreParcelPolygon();
+      if (clearPolygon) {
+        clearCadastreParcelPolygon();
+      }
       mapMarkersGroup.clearLayers();
       mapQuartiersGroup.clearLayers();
 
@@ -4332,7 +4371,7 @@
               <span>Source : ${item.source || 'Immo NC'}</span>
             </div>
             <div style="display: flex; gap: 6px;">
-              <button onclick="showCadastreParcelPolygon(${item.lat}, ${item.lon})" style="flex: 1; padding: 6px 8px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Tracer le contour officiel de la parcelle cadastrale">
+              <button onclick="event.stopPropagation(); showCadastreParcelPolygon(${item.lat}, ${item.lon}, true);" style="flex: 1; padding: 6px 8px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Tracer le contour officiel de la parcelle cadastrale">
                 <span>🏛️ Détourer Lot</span>
               </button>
               <button onclick="openDetailModal('${item.id}')" style="flex: 1; padding: 6px 8px; background: #0284c7; color: white; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.background='#0369a1'" onmouseout="this.style.background='#0284c7'">
@@ -4353,15 +4392,6 @@
         });
 
         marker.bindPopup(popupHtml, { maxWidth: 280, className: 'custom-immo-popup' });
-        marker.on('click', () => {
-          showCadastreParcelPolygon(item.lat, item.lon);
-        });
-        marker.on('popupopen', () => {
-          showCadastreParcelPolygon(item.lat, item.lon);
-        });
-        marker.on('popupclose', () => {
-          clearCadastreParcelPolygon();
-        });
         marker.addTo(mapMarkersGroup);
       });
 
