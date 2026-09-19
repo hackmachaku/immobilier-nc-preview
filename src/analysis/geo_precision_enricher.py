@@ -277,22 +277,58 @@ class GeoPrecisionEnricher:
         _EXIF_CACHE[photo_url] = res
         return res
 
-    def match_refil_semantics(self, text: str) -> Optional[Dict[str, Any]]:
-        """Recherche par NLP sémantique des noms de résidences ou immeubles dans le descriptif."""
+    def match_refil_semantics(
+        self,
+        text: str,
+        commune: Optional[str] = None,
+        quartier: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Recherche par NLP sémantique des noms de résidences ou immeubles dans le descriptif avec validation communale."""
         if not text or not self.refil_entries:
             return None
-        lower = text.lower()
+
+        text_clean = re.sub(r'(?:contact|tél|tel|email|mail|agent)\s*:.*', '', text, flags=re.IGNORECASE).lower()
+
+        COMMUNE_BOUNDS = {
+            "NOUMEA": {"lat_min": -22.4783, "lat_max": -22.2169, "lon_min": 166.2930, "lon_max": 166.5062},
+            "DUMBEA": {"lat_min": -22.2274, "lat_max": -22.0799, "lon_min": 166.3918, "lon_max": 166.5931},
+            "MONT_DORE": {"lat_min": -22.4673, "lat_max": -22.1486, "lon_min": 166.4802, "lon_max": 166.9733},
+            "PAITA": {"lat_min": -22.2436, "lat_max": -21.9438, "lon_min": 166.0812, "lon_max": 166.4217},
+        }
+
+        com_clean = str(commune or "").upper().replace("-", "_").replace(" ", "_") if commune else None
+
+        COMMON_WORDS = {
+            "berger", "dominique", "niaoulis", "palmiers", "soleil", "colline",
+            "terrasse", "plage", "grand sud", "jardin", "marina", "baie",
+            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer"
+        }
         context_triggers = ["résidence", "residence", "immeuble", "lotissement", "domaine", "tour", "bâtiment", "batiment", "villa"]
 
         for entry in self.refil_entries:
             name = entry["name_clean"]
-            if name in lower:
-                # Si nom distinctif long (> 6 lettres), match direct
-                if len(name) >= 7:
-                    return entry
-                # Si nom court, exiger la présence d'un déclencheur contextuel
-                for cw in context_triggers:
-                    if f"{cw} {name}" in lower or f"{cw} « {name} »" in lower or f"{cw} \"{name}\"" in lower:
+            lat, lon = entry["lat"], entry["lon"]
+
+            # Vérification communale stricte si la commune est déclarée
+            if com_clean:
+                if com_clean in COMMUNE_BOUNDS:
+                    b = COMMUNE_BOUNDS[com_clean]
+                    if not (b["lat_min"] <= lat <= b["lat_max"] and b["lon_min"] <= lon <= b["lon_max"]):
+                        continue
+                elif com_clean == "AUTRE":
+                    # Rejeter les bâtiments du Grand Nouméa si l'annonce est en Brousse / Îles
+                    if -22.48 <= lat <= -22.05 and 166.05 <= lon <= 167.00:
+                        continue
+
+            if name in text_clean:
+                # Si mot commun ou nom court, exiger impérativement un déclencheur contextuel
+                if name in COMMON_WORDS or len(name) < 7:
+                    for cw in context_triggers:
+                        if f"{cw} {name}" in text_clean or f"{cw} « {name} »" in text_clean or f"{cw} \"{name}\"" in text_clean:
+                            return entry
+                else:
+                    # Vérifier présence en mot entier
+                    if re.search(r'\b' + re.escape(name) + r'\b', text_clean):
                         return entry
         return None
 
@@ -355,7 +391,9 @@ class GeoPrecisionEnricher:
             return enriched
 
         # NIVEAU 2 : Sémantique REFIL DITTT
-        refil_match = self.match_refil_semantics(text_corpus)
+        com = item.get("commune")
+        q = item.get("quartier")
+        refil_match = self.match_refil_semantics(text_corpus, commune=com, quartier=q)
         if refil_match:
             enriched["lat_precise"] = refil_match["lat"]
             enriched["lon_precise"] = refil_match["lon"]
@@ -427,7 +465,7 @@ class GeoPrecisionEnricher:
                 # Check regex date from URL
                 dt_url = parse_photo_date_from_text(img_url) if img_url else None
                 age_m = max(0, (now.year - dt_url.year) * 12 + (now.month - dt_url.month)) if dt_url else None
-                refil_match = self.match_refil_semantics(f"{title} {desc}")
+                refil_match = self.match_refil_semantics(f"{title} {desc}", commune=com, quartier=q)
                 lot_num = self.extract_cadastre_lot_reference(f"{title} {desc}")
 
                 if refil_match:
@@ -492,12 +530,36 @@ class GeoPrecisionEnricher:
                             dt_iso = dt.isoformat() if hasattr(dt, "isoformat") else (str(dt) if dt else None)
                             age_m = max(0, (now.year - dt.year) * 12 + (now.month - dt.month)) if dt else None
                             if meta.get("lat") and meta.get("lon"):
-                                cam = f" ({meta['camera']})" if meta.get("camera") else ""
-                                updates.append((
-                                    meta["lat"], meta["lon"], 95, "METRIQUE_GPS",
-                                    f"GPS Photo certifié au mètre{cam}",
-                                    dt_iso, age_m, lid
-                                ))
+                                com_clean = str(it.get("commune") or "").upper().replace("-", "_").replace(" ", "_")
+                                COMMUNE_BOUNDS = {
+                                    "NOUMEA": {"lat_min": -22.4783, "lat_max": -22.2169, "lon_min": 166.2930, "lon_max": 166.5062},
+                                    "DUMBEA": {"lat_min": -22.2274, "lat_max": -22.0799, "lon_min": 166.3918, "lon_max": 166.5931},
+                                    "MONT_DORE": {"lat_min": -22.4673, "lat_max": -22.1486, "lon_min": 166.4802, "lon_max": 166.9733},
+                                    "PAITA": {"lat_min": -22.2436, "lat_max": -21.9438, "lon_min": 166.0812, "lon_max": 166.4217},
+                                }
+                                is_valid_exif = True
+                                if com_clean in COMMUNE_BOUNDS:
+                                    b = COMMUNE_BOUNDS[com_clean]
+                                    if not (b["lat_min"] <= meta["lat"] <= b["lat_max"] and b["lon_min"] <= meta["lon"] <= b["lon_max"]):
+                                        is_valid_exif = False
+                                elif com_clean == "AUTRE":
+                                    if -22.48 <= meta["lat"] <= -22.05 and 166.05 <= meta["lon"] <= 167.00:
+                                        is_valid_exif = False
+
+                                if is_valid_exif:
+                                    cam = f" ({meta['camera']})" if meta.get("camera") else ""
+                                    updates.append((
+                                        meta["lat"], meta["lon"], 95, "METRIQUE_GPS",
+                                        f"GPS Photo certifié au mètre{cam}",
+                                        dt_iso, age_m, lid
+                                    ))
+                                else:
+                                    q_name = it.get("quartier") or it.get("commune") or "Secteur"
+                                    updates.append((
+                                        None, None, 40, "QUARTIER_DEFAULT",
+                                        f"Approximation centroïde secteur : {q_name}",
+                                        dt_iso, age_m, lid
+                                    ))
                             else:
                                 q_name = it.get("quartier") or it.get("commune") or "Secteur"
                                 updates.append((
@@ -512,8 +574,8 @@ class GeoPrecisionEnricher:
             if updates:
                 con.executemany("""
                     UPDATE listings SET
-                        lat_precise = COALESCE(?, lat_precise),
-                        lon_precise = COALESCE(?, lon_precise),
+                        lat_precise = ?,
+                        lon_precise = ?,
                         precision_score = ?,
                         precision_level = ?,
                         precision_detail = ?,

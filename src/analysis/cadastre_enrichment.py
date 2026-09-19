@@ -121,6 +121,8 @@ class CadastreSpatialIndex:
         self.refil_grid: dict[tuple[int, int], list[dict[str, Any]]] = {}
         self.refil_text_lookup: list[tuple[str, float, float, str, str, str]] = []
         self.quartier_parcels: dict[str, list[dict[str, Any]]] = {}
+        self.commune_quartier_parcels: dict[str, dict[str, list[dict[str, Any]]]] = {}
+        self.commune_parcels: dict[str, list[dict[str, Any]]] = {}
         self.is_loaded = False
 
     def load(self) -> None:
@@ -227,14 +229,30 @@ class CadastreSpatialIndex:
                     str(r[3] or "")
                 ))
 
-        # 3. Construire le vivier de parcelles cadastrales par quartier
+        # 3. Construire le vivier de parcelles cadastrales indexées par commune et par quartier
+        self.commune_parcels.clear()
+        for p in all_parcels_flat:
+            c_raw = str(p["commune"] or "").upper().replace("-", "_").replace(" ", "_")
+            if "MONT_DORE" in c_raw:
+                c_raw = "MONT_DORE"
+            elif "POYA" in c_raw:
+                c_raw = "POYA"
+            if c_raw not in self.commune_parcels:
+                self.commune_parcels[c_raw] = []
+            self.commune_parcels[c_raw].append(p)
+
         self.quartier_parcels.clear()
+        self.commune_quartier_parcels.clear()
         ref_path = self.cadastre_dir.parent / "reference" / "referentiel_grand_noumea.json"
         if ref_path.exists():
             try:
                 with open(ref_path, "r", encoding="utf-8") as f:
                     ref_data = json.load(f)
                 for com_k, com_val in ref_data.get("communes", {}).items():
+                    ck = com_k.upper().replace("-", "_").replace(" ", "_")
+                    if ck not in self.commune_quartier_parcels:
+                        self.commune_quartier_parcels[ck] = {}
+                    commune_pool = self.commune_parcels.get(ck, [])
                     for q in com_val.get("quartiers", []):
                         q_name = str(q.get("nom") or "").strip().lower()
                         qlat = float(q.get("latitude", 0))
@@ -242,14 +260,15 @@ class CadastreSpatialIndex:
                         if not qlat or not qlon:
                             continue
                         matched = []
-                        for p in all_parcels_flat:
+                        for p in commune_pool:
                             plat, plon = p["lat"], p["lon"]
                             dx = (plon - qlon) * math.cos(math.radians((plat + qlat) / 2)) * 111320
                             dy = (plat - qlat) * 110540
                             dist = math.sqrt(dx * dx + dy * dy)
-                            if dist <= 1100:  # Rayon de 1,1 km autour du barycentre terrestre du quartier
+                            if dist <= 1200:  # Rayon de 1,2 km autour du barycentre terrestre du quartier
                                 matched.append(p)
                         if matched:
+                            self.commune_quartier_parcels[ck][q_name] = matched
                             self.quartier_parcels[q_name] = matched
             except Exception as e:
                 logger.warning(f"Impossible de construire le mapping quartier/parcelles : {e}")
@@ -257,8 +276,8 @@ class CadastreSpatialIndex:
         con.close()
         self.is_loaded = True
         logger.info(
-            "Index spatial cadastre initialisé : %d parcelles dans %d cellules, %d immeubles REFIL (%d pour lookup textuel), %d quartiers mappés.",
-            len(p_rows), len(self.parcel_grid), len(r_rows), len(self.refil_text_lookup), len(self.quartier_parcels)
+            "Index spatial cadastre initialisé : %d parcelles dans %d cellules, %d immeubles REFIL (%d pour lookup textuel), %d communes et %d quartiers mappés.",
+            len(p_rows), len(self.parcel_grid), len(r_rows), len(self.refil_text_lookup), len(self.commune_parcels), len(self.quartier_parcels)
         )
 
     def find_nearest_parcel(
@@ -335,18 +354,89 @@ class CadastreSpatialIndex:
     ) -> dict[str, Any]:
         """
         Résout les coordonnées géographiques terrestres précises pour une annonce.
-        Niveau 1 : Immeuble / Résidence REFIL identifiée dans le titre ou la description.
-        Niveau 2 : Répartition déterministe sur les parcelles cadastrales réelles du quartier (terre ferme).
-        Niveau 3 : Barycentre communal sécurisé sur la terre ferme.
+        Niveau 1 : Immeuble / Résidence REFIL identifiée dans le titre ou la description (validé dans la commune).
+        Niveau 2 : Répartition déterministe sur les parcelles cadastrales réelles du quartier DANS la commune.
+        Niveau 3 : Répartition déterministe sur le vivier de parcelles cadastrales réelles de la commune.
+        Niveau 4 : Localité identifiée en brousse ou barycentre sécurisé sur la terre ferme.
         """
         if not self.is_loaded:
             self.load()
 
         text = f"{title or ''} {description or ''}".lower()
+        text_clean = re.sub(r'(?:contact|tél|tel|email|mail|agent)\s*:.*', '', text, flags=re.IGNORECASE)
 
-        # Niveau 1 : Détection immeuble REFIL
-        for b_nom, b_lat, b_lon, orig_nom, adrs, q_refil in self.refil_text_lookup:
-            if f" {b_nom} " in f" {text} " or f"'{b_nom}" in text or f'"{b_nom}' in text or f"({b_nom}" in text:
+        com_clean = str(commune or "NOUMEA").upper().replace("-", "_").replace(" ", "_")
+        target_com = com_clean
+
+        COMMUNE_BOUNDS = {
+            "NOUMEA": {"lat_min": -22.4783, "lat_max": -22.2169, "lon_min": 166.2930, "lon_max": 166.5062},
+            "DUMBEA": {"lat_min": -22.2274, "lat_max": -22.0799, "lon_min": 166.3918, "lon_max": 166.5931},
+            "MONT_DORE": {"lat_min": -22.4673, "lat_max": -22.1486, "lon_min": 166.4802, "lon_max": 166.9733},
+            "PAITA": {"lat_min": -22.2436, "lat_max": -21.9438, "lon_min": 166.0812, "lon_max": 166.4217},
+        }
+
+        BROUSSE_COMMUNES = {
+            "BOURAIL": (-21.564, 165.493),
+            "LA_FOA": (-21.711, 165.828),
+            "BOULOUPARIS": (-21.866, 166.052),
+            "POUEMBOUT": (-21.134, 164.901),
+            "KONE": (-21.059, 164.865),
+            "VOH": (-20.963, 164.698),
+            "KOUMAC": (-20.559, 164.283),
+            "KAALA_GOMEN": (-20.668, 164.402),
+            "POINDIMIE": (-20.932, 165.334),
+            "TOUHO": (-20.789, 165.253),
+            "HIENGHENE": (-20.683, 164.935),
+            "HOUAILOU": (-21.284, 165.626),
+            "CANALA": (-21.517, 165.958),
+            "THIO": (-21.613, 166.216),
+            "YATE": (-22.160, 166.958),
+            "MOINDOU": (-21.554, 165.679),
+            "FARINO": (-21.660, 165.772),
+            "SARRAMEA": (-21.644, 165.845),
+            "POUM": (-20.233, 164.025),
+            "LIFOU": (-20.916, 167.240),
+            "MARE": (-21.488, 167.973),
+            "OUVEA": (-20.638, 166.576),
+            "ILE_DES_PINS": (-22.617, 167.456),
+            "POYA": (-21.349, 165.155),
+        }
+
+        # Si commune déclarée AUTRE, détecter la localité en brousse dans le titre/texte
+        if com_clean == "AUTRE":
+            for b_name in BROUSSE_COMMUNES:
+                b_kw = b_name.lower().replace("_", " ")
+                if re.search(r"\b" + re.escape(b_kw) + r"\b", text_clean):
+                    target_com = b_name
+                    break
+
+        # Niveau 1 : Détection immeuble REFIL avec vérification communale stricte
+        COMMON_WORDS = {
+            "berger", "dominique", "niaoulis", "palmiers", "soleil", "colline",
+            "terrasse", "plage", "grand sud", "jardin", "marina", "baie",
+            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer"
+        }
+        TRIGGERS = ("résidence", "residence", "immeuble", "bâtiment", "batiment", "domaine", "lotissement", "tour")
+
+        if target_com in COMMUNE_BOUNDS:
+            b_bounds = COMMUNE_BOUNDS[target_com]
+            for b_nom, b_lat, b_lon, orig_nom, adrs, q_refil in self.refil_text_lookup:
+                # Vérifier que le bâtiment REFIL est bien dans la commune ciblée
+                if not (b_bounds["lat_min"] <= b_lat <= b_bounds["lat_max"] and b_bounds["lon_min"] <= b_lon <= b_bounds["lon_max"]):
+                    continue
+
+                # Si le nom est un mot commun ou court, exiger un déclencheur
+                if b_nom in COMMON_WORDS or len(b_nom) < 7:
+                    matched_trigger = any(
+                        f"{cw} {b_nom}" in text_clean or f"{cw} « {b_nom} »" in text_clean or f"{cw} \"{b_nom}\"" in text_clean
+                        for cw in TRIGGERS
+                    )
+                    if not matched_trigger:
+                        continue
+                else:
+                    if not (f" {b_nom} " in f" {text_clean} " or f"'{b_nom}" in text_clean or f'"{b_nom}' in text_clean or f"({b_nom}" in text_clean):
+                        continue
+
                 return {
                     "lat": b_lat,
                     "lon": b_lon,
@@ -356,17 +446,18 @@ class CadastreSpatialIndex:
                     "refilQuartier": q_refil
                 }
 
-        # Niveau 2 : Répartition sur parcelle cadastrale réelle du quartier
+        # Niveau 2 : Répartition sur parcelle cadastrale réelle du quartier DANS la commune
+        q_pool = self.commune_quartier_parcels.get(target_com, {})
         clean_q = str(quartier or "").lower().strip()
-        p_list = self.quartier_parcels.get(clean_q)
+        p_list = q_pool.get(clean_q)
         if not p_list:
-            for k, v in self.quartier_parcels.items():
+            for k, v in q_pool.items():
                 if k in clean_q or clean_q in k:
                     p_list = v
                     break
         if not p_list:
-            for k, v in self.quartier_parcels.items():
-                if len(k) >= 4 and k in text:
+            for k, v in q_pool.items():
+                if len(k) >= 5 and re.search(r"\b" + re.escape(k) + r"\b", text_clean):
                     p_list = v
                     break
 
@@ -380,18 +471,44 @@ class CadastreSpatialIndex:
                 "parcel": p
             }
 
-        # Niveau 3 : Fallback commune sécurisé
-        com_clean = str(commune or "NOUMEA").upper().replace("-", "_").replace(" ", "_")
+        # Niveau 3 : Répartition sur le vivier de parcelles cadastrales de la commune
+        c_pool = self.commune_parcels.get(target_com)
+        if c_pool:
+            idx = abs(hash(str(item_id))) % len(c_pool)
+            p = c_pool[idx]
+            return {
+                "lat": p["lat"],
+                "lon": p["lon"],
+                "match_type": f"COMMUNE_PARCEL_{target_com}",
+                "parcel": p
+            }
+
+        # Niveau 4 : Localité Brousse ou Fallback Grande Terre sur terre ferme
+        if target_com in BROUSSE_COMMUNES:
+            base_lat, base_lon = BROUSSE_COMMUNES[target_com]
+            h = abs(hash(str(item_id)))
+            j_lat = ((h % 40) - 20) * 0.0002
+            j_lon = (((h // 40) % 40) - 20) * 0.0002
+            return {
+                "lat": base_lat + j_lat,
+                "lon": base_lon + j_lon,
+                "match_type": f"BROUSSE_TOWN_{target_com}"
+            }
+
         centers = {
             "NOUMEA": (-22.2710, 166.4420),
             "DUMBEA": (-22.1850, 166.4450),
             "MONT_DORE": (-22.2285, 166.5206),
             "PAITA": (-22.1310, 166.3650),
+            "AUTRE": (-21.5000, 165.5000),
         }
-        base_lat, base_lon = centers.get(com_clean, (-22.2710, 166.4420))
+        base_lat, base_lon = centers.get(com_clean, (-21.5000, 165.5000))
+        h = abs(hash(str(item_id)))
+        j_lat = ((h % 40) - 20) * 0.0002
+        j_lon = (((h // 40) % 40) - 20) * 0.0002
         return {
-            "lat": base_lat,
-            "lon": base_lon,
+            "lat": base_lat + j_lat,
+            "lon": base_lon + j_lon,
             "match_type": "COMMUNE_FALLBACK"
         }
 

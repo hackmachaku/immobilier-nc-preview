@@ -61,6 +61,33 @@
     .leaflet-container {
       font-family: inherit !important;
     }
+    /* Sélecteur de fonds de carte Leaflet personnalisé Dark Mode */
+    .leaflet-control-layers {
+      background: #151f38 !important;
+      color: #f8fafc !important;
+      border: 1px solid #233252 !important;
+      border-radius: 10px !important;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5) !important;
+      padding: 8px 12px !important;
+      font-size: 12px !important;
+    }
+    .leaflet-control-layers-toggle {
+      background-color: #151f38 !important;
+      border-radius: 8px !important;
+      border: 1px solid #233252 !important;
+    }
+    .leaflet-control-layers label {
+      color: #e2e8f0 !important;
+      margin-bottom: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .leaflet-control-layers-separator {
+      border-top: 1px solid #233252 !important;
+      margin: 6px 0 !important;
+    }
     /* Cluster Badges pour fluidité 60 FPS */
     /* Tooltip Parcelle Cadastrale Éclatante */
     .parcel-tooltip {
@@ -4013,20 +4040,66 @@
         wheelDebounceTime: 40
       }).setView([-22.255, 166.465], 12);
 
-      // Fond de carte haute performance CartoDB Voyager propulsé par Fastly Anycast Global CDN
-      // Temps de chargement ultra-rapide (<100ms) et clarté visuelle maximale pour l'immobilier
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
+      // 1. Fond de carte OpenStreetMap Standard (Par défaut - Optimal pour la Nouvelle-Calédonie)
+      // Richesse maximale : noms de rues, numéros, contours de bâtiments, points d'intérêt locaux
+      const osmStandardLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> contributeurs',
+        maxZoom: 19,
+        keepBuffer: 8,
+        updateWhenIdle: true,
+        updateWhenZooming: false
+      });
+
+      // 2. Fond de carte OpenStreetMap France (Rendu alternatif soigné)
+      const osmFranceLayer = L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', {
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank">OpenStreetMap</a> France',
+        subdomains: 'abc',
+        maxZoom: 20,
+        keepBuffer: 8,
+        updateWhenIdle: true,
+        updateWhenZooming: false
+      });
+
+      // 3. Imagerie Satellite HD Esri (Idéal pour vérifier la végétation, toiture, piscine, limites de parcelle)
+      const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+        maxZoom: 19,
+        keepBuffer: 8,
+        updateWhenIdle: true,
+        updateWhenZooming: false
+      });
+
+      // 4. CartoDB Voyager (Style épuré haute lisibilité)
+      const cartoVoyagerLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {
         attribution: '&copy; <a href="https://carto.com/">CARTO</a> &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
         subdomains: 'abcd',
         maxZoom: 19,
         keepBuffer: 8,
         updateWhenIdle: true,
         updateWhenZooming: false
-      }).addTo(leafletMapInstance);
+      });
 
-      // Groupe standard pour affichage direct de chaque pastille de couleur sans regroupement
+      // OpenStreetMap Standard activé par défaut
+      osmStandardLayer.addTo(leafletMapInstance);
+
+      // Groupes de calques applicatifs
       mapMarkersGroup = L.layerGroup().addTo(leafletMapInstance);
       mapQuartiersGroup = L.layerGroup().addTo(leafletMapInstance);
+
+      // Sélecteur de couches interactif ergonomique
+      const baseMaps = {
+        "🗺️ OpenStreetMap (Recommandé NC)": osmStandardLayer,
+        "🇫🇷 OpenStreetMap France": osmFranceLayer,
+        "🛰️ Vue Satellite HD": satelliteLayer,
+        "🎨 Plan Épuré (Carto Voyager)": cartoVoyagerLayer
+      };
+
+      const overlayMaps = {
+        "📍 Annonces Immobilières": mapMarkersGroup,
+        "🏷️ Secteurs & Quartiers": mapQuartiersGroup
+      };
+
+      L.control.layers(baseMaps, overlayMaps, { position: 'topright', collapsed: true }).addTo(leafletMapInstance);
 
       updateMapLegend();
       renderMapMarkers();

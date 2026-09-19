@@ -655,6 +655,23 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 # Géolocalisation haute précision et datation des photos
                 lat_p = safe_float(row.get("lat_precise"), None)
                 lon_p = safe_float(row.get("lon_precise"), None)
+                if lat_p and lon_p:
+                    COMMUNE_BOUNDS_VERIF = {
+                        "NOUMEA": (-22.4783, -22.2169, 166.2930, 166.5062),
+                        "DUMBEA": (-22.2274, -22.0799, 166.3918, 166.5931),
+                        "MONT_DORE": (-22.4673, -22.1486, 166.4802, 166.9733),
+                        "PAITA": (-22.2436, -21.9438, 166.0812, 166.4217),
+                    }
+                    if commune_enum in COMMUNE_BOUNDS_VERIF:
+                        b_lat_min, b_lat_max, b_lon_min, b_lon_max = COMMUNE_BOUNDS_VERIF[commune_enum]
+                        if not (b_lat_min <= lat_p <= b_lat_max and b_lon_min <= lon_p <= b_lon_max):
+                            lat_p = None
+                            lon_p = None
+                    elif commune_enum == "AUTRE":
+                        if -22.48 <= lat_p <= -22.05 and 166.05 <= lon_p <= 167.00:
+                            lat_p = None
+                            lon_p = None
+
                 final_lat = lat_p if (lat_p is not None and lat_p != 0.0) else lat_val
                 final_lon = lon_p if (lon_p is not None and lon_p != 0.0) else lon_val
 
