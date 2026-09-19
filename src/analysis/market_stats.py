@@ -46,7 +46,7 @@ class MarketAnalytics:
         """
         query = """
         SELECT * FROM listings 
-        WHERE transaction_type = 'VENTE' AND is_active = TRUE AND surface_habitable_m2 IS NOT NULL;
+        WHERE transaction_type = 'VENTE' AND is_active = TRUE AND surface_habitable_m2 > 0;
         """
         df = self.db.query(query)
         opportunities: List[Dict[str, Any]] = []

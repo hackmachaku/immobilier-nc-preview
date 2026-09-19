@@ -3,6 +3,7 @@ import sys
 import json
 import re
 import urllib.parse
+import threading
 from http.server import ThreadingHTTPServer, SimpleHTTPRequestHandler
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ logger = get_logger("server")
 PORT = 8080
 
 PARCEL_POLYGON_CACHE: Dict[str, Any] = {}
+_CACHED_LISTINGS_PAYLOAD: Optional[bytes] = None
 
 
 def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float = 0.0) -> Dict[str, Any]:
@@ -238,8 +240,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
     def _send_json(self, data: Any, status_code: int = 200):
         """Envoie une réponse JSON strictement valide RFC 8259 (sans NaN) avec les en-têtes CORS nécessaires."""
-        clean_data = sanitize_for_json(data)
-        payload = json.dumps(clean_data, default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
+        if isinstance(data, (bytes, bytearray)):
+            payload = data
+        else:
+            clean_data = sanitize_for_json(data)
+            payload = json.dumps(clean_data, default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
@@ -298,6 +303,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
     def handle_get_listings(self):
         """Renvoie les annonces réelles stockées dans DuckDB formatées pour le frontend."""
+        global _CACHED_LISTINGS_PAYLOAD
         try:
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
@@ -308,7 +314,10 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 except (ValueError, TypeError):
                     limit_val = None
 
-            db = PropertyDatabase()
+            if not limit_val and _CACHED_LISTINGS_PAYLOAD is not None:
+                return self._send_json(_CACHED_LISTINGS_PAYLOAD)
+
+            db = PropertyDatabase(read_only=True)
             if limit_val and limit_val > 0:
                 df = db.query(f"""
                     SELECT * FROM listings 
@@ -683,7 +692,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 logger.warning(f"Impossible d'enrichir les annonces avec le cadastre : {e}")
 
-            self._send_json({"success": True, "count": len(listings), "data": listings})
+            clean_payload = {"success": True, "count": len(listings), "data": listings}
+            payload_bytes = json.dumps(sanitize_for_json(clean_payload), default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if not limit_val:
+                _CACHED_LISTINGS_PAYLOAD = payload_bytes
+            self._send_json(payload_bytes)
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des annonces : {e}")
             self._send_json({"success": False, "error": str(e)}, status_code=500)
@@ -1056,6 +1069,30 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             include_immonc=True,
             source_filter=source_filter
         )
+
+        global _CACHED_LISTINGS_PAYLOAD
+        _CACHED_LISTINGS_PAYLOAD = None
+
+        # Exporte les snapshots statiques et préchauffe le cache en arrière-plan
+        def _sync_static_files():
+            try:
+                import urllib.request
+                for ep, fp in [
+                    (f"http://127.0.0.1:{PORT}/api/listings", BASE_DIR / "data_listings.json"),
+                    (f"http://127.0.0.1:{PORT}/api/sources", BASE_DIR / "data_sources.json"),
+                    (f"http://127.0.0.1:{PORT}/api/agencies", BASE_DIR / "data_agencies.json"),
+                ]:
+                    try:
+                        with urllib.request.urlopen(ep, timeout=15) as resp:
+                            data = resp.read()
+                            with open(fp, "wb") as f:
+                                f.write(data)
+                    except Exception as ex:
+                        logger.warning(f"Erreur sync static file {fp.name}: {ex}")
+            except Exception as e:
+                logger.warning(f"Erreur lors de la synchronisation statique : {e}")
+
+        threading.Thread(target=_sync_static_files, daemon=True).start()
 
         self._send_json(result)
 

@@ -79,6 +79,53 @@
     #detailModal, #manualModal, #addSourceModal {
       z-index: 99999 !important;
     }
+    .price-slider {
+      height: 8px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: transparent;
+      pointer-events: none;
+    }
+    .price-slider::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #38bdf8;
+      border: 2px solid #ffffff;
+      cursor: pointer;
+      pointer-events: auto;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+      transition: transform 0.15s ease, background-color 0.15s ease;
+    }
+    .price-slider::-webkit-slider-thumb:hover {
+      transform: scale(1.18);
+      background: #0ea5e9;
+    }
+    .price-slider::-webkit-slider-thumb:active {
+      transform: scale(1.25);
+      background: #0284c7;
+    }
+    .price-slider::-moz-range-thumb {
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #38bdf8;
+      border: 2px solid #ffffff;
+      cursor: pointer;
+      pointer-events: auto;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+    }
+    .price-chip {
+      transition: all 0.15s ease;
+    }
+    .price-chip.active {
+      background-color: #0284c7 !important;
+      color: #ffffff !important;
+      border-color: #38bdf8 !important;
+      box-shadow: 0 2px 8px rgba(14, 165, 233, 0.3) !important;
+    }
   </style>
 </head>
 <body class="min-h-screen p-3 md:p-6 lg:p-8">
@@ -258,7 +305,7 @@
 
         <!-- Commune, Transaction, Agency & Opportunity Filters -->
         <div class="flex flex-wrap items-center gap-3">
-          <select id="transactionFilter" onchange="filterListings()" class="px-3 py-1.5 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-xs text-indigo-200 font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-400">
+          <select id="transactionFilter" onchange="onTransactionFilterChange()" class="px-3 py-1.5 rounded-lg bg-indigo-950/60 border border-indigo-500/40 text-xs text-indigo-200 font-semibold focus:outline-none focus:ring-1 focus:ring-indigo-400">
             <option value="all">🏷️ Toutes opérations (Ventes & Locations)</option>
             <option value="VENTE">🏡 Vente / Achat uniquement</option>
             <option value="LOCATION">🔑 Location uniquement</option>
@@ -308,6 +355,45 @@
             <option value="drop_desc">Plus forte baisse (%)</option>
           </select>
         </div>
+
+        <!-- SECTION FOURCHETTE DE PRIX DYNAMIQUE (SLIDER & PRESETS) -->
+        <div id="priceFilterSection" class="w-full pt-3.5 mt-1 border-t border-slate-800/80 flex flex-col lg:flex-row lg:items-center justify-between gap-3.5">
+          
+          <!-- GAUCHE : Indicateur et Affichage Dynamique -->
+          <div class="flex items-center gap-2.5 shrink-0 flex-wrap">
+            <div class="flex items-center gap-1.5 text-xs text-slate-300">
+              <span>💰</span>
+              <span class="font-bold">Budget :</span>
+              <span id="priceDisplayLabel" class="font-mono font-bold text-sky-400 bg-sky-950/60 px-2.5 py-1 rounded-lg border border-sky-500/30 text-xs shadow-sm">
+                Tous les prix
+              </span>
+            </div>
+            <button id="priceResetBtn" onclick="resetPriceFilter()" class="hidden text-[11px] text-slate-400 hover:text-rose-400 hover:bg-slate-800/80 px-2 py-0.5 rounded border border-slate-700/60 transition-colors flex items-center gap-1 font-medium cursor-pointer" title="Effacer le filtre de prix">
+              <span>✕ Réinitialiser</span>
+            </button>
+          </div>
+
+          <!-- CENTRE : Double Curseur / Slider avec Jauge Active -->
+          <div class="flex-1 max-w-xl flex items-center gap-3 px-1">
+            <div class="relative w-full flex items-center py-2 select-none">
+              <!-- Barre de fond statique -->
+              <div class="w-full h-2 rounded-lg bg-slate-800 relative overflow-hidden">
+                <!-- Zone sélectionnée en dégradé -->
+                <div id="priceRangeHighlight" class="absolute h-full bg-gradient-to-r from-sky-500 to-emerald-400 rounded-lg" style="left: 0%; right: 0%;"></div>
+              </div>
+              <!-- Curseur Min -->
+              <input type="range" id="priceMinSlider" min="0" max="60" step="1" value="0" oninput="onPriceSliderChange('min')" class="price-slider absolute w-full appearance-none bg-transparent" />
+              <!-- Curseur Max -->
+              <input type="range" id="priceMaxSlider" min="0" max="60" step="1" value="60" oninput="onPriceSliderChange('max')" class="price-slider absolute w-full appearance-none bg-transparent" />
+            </div>
+          </div>
+
+          <!-- DROITE : Puces de Budgets Prédéfinis (Presets) -->
+          <div id="pricePresetChips" class="flex flex-wrap items-center gap-1.5 shrink-0">
+            <!-- Injecté dynamiquement par renderPricePresets() -->
+          </div>
+
+        </div>
       </div>
 
       <!-- BANNIÈRE DE FILTRE KPI ACTIF (Feedback visuel instantané) -->
@@ -334,6 +420,26 @@
         </div>
         <h3 class="text-lg font-semibold text-white">Aucune annonce ne correspond aux filtres</h3>
         <p class="text-sm text-slate-400 mt-1">Ajustez vos filtres ou ajoutez une annonce manuellement.</p>
+      </div>
+
+      <!-- PAGINATION CONTROLS -->
+      <div id="paginationContainer" class="flex flex-col sm:flex-row items-center justify-between gap-4 p-4 rounded-2xl bg-[var(--card)] border border-[var(--border)] mt-6">
+        <div class="text-xs text-slate-400 flex items-center gap-1.5">
+          <span>Affichage de <strong id="pagStart" class="text-white font-semibold">1</strong> à <strong id="pagEnd" class="text-white font-semibold">36</strong> sur <strong id="pagTotal" class="text-sky-400 font-semibold">2 775</strong> annonces</span>
+        </div>
+
+        <div id="paginationButtons" class="flex items-center gap-1.5 flex-wrap justify-center"></div>
+
+        <div class="flex items-center gap-2 text-xs text-slate-400">
+          <span>Par page :</span>
+          <select id="pageSizeSelect" onchange="changePageSize(this.value)" class="px-2.5 py-1.5 rounded-lg bg-slate-800 border border-[var(--border)] text-xs text-slate-200 focus:outline-none focus:ring-1 focus:ring-sky-500 font-semibold cursor-pointer">
+            <option value="24">24</option>
+            <option value="36" selected>36</option>
+            <option value="60">60</option>
+            <option value="120">120</option>
+            <option value="all">Tous</option>
+          </select>
+        </div>
       </div>
 
     </section>
@@ -1264,6 +1370,9 @@
     let listingsData = [];
 
     let activeCategory = 'all';
+    let currentPage = 1;
+    let pageSize = 36;
+    let currentFilteredListings = [];
 
     function formatPriceXPF(amount) {
       return (amount || 0).toLocaleString('fr-FR') + ' F CFP';
@@ -1272,6 +1381,59 @@
     function formatPriceEUR(amount) {
       const eur = Math.round((amount || 0) / 119.33);
       return `≈ ${eur.toLocaleString('fr-FR')} €`;
+    }
+
+    // Notifications Toast modernes et fluides sans blocage (remplace alert() bloquant)
+    function showNotificationToast(title, message, type = 'success', duration = 6000) {
+      let container = document.getElementById('toastNotificationContainer');
+      if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastNotificationContainer';
+        container.className = 'fixed bottom-5 right-5 z-[999999] flex flex-col gap-2.5 pointer-events-none max-w-sm w-full px-4 sm:px-0';
+        document.body.appendChild(container);
+      }
+
+      const toast = document.createElement('div');
+      toast.className = 'pointer-events-auto p-4 rounded-2xl shadow-2xl border transition-all duration-300 transform translate-y-2 opacity-0 flex items-start gap-3 backdrop-blur-md ';
+
+      if (type === 'success') {
+        toast.className += 'bg-slate-900/95 border-emerald-500/50 text-white';
+      } else if (type === 'error') {
+        toast.className += 'bg-slate-900/95 border-rose-500/50 text-white';
+      } else {
+        toast.className += 'bg-slate-900/95 border-sky-500/50 text-white';
+      }
+
+      const icon = type === 'success' ? '✅' : (type === 'error' ? '⚠️' : 'ℹ️');
+
+      toast.innerHTML = `
+        <span class="text-xl shrink-0 mt-0.5">${icon}</span>
+        <div class="flex-1 min-w-0">
+          <h4 class="text-sm font-bold text-white mb-0.5">${title}</h4>
+          <div class="text-xs text-slate-300 whitespace-pre-line leading-relaxed">${message}</div>
+        </div>
+        <button class="text-slate-400 hover:text-white text-sm font-bold p-1 shrink-0 transition-colors" title="Fermer">✕</button>
+      `;
+
+      toast.querySelector('button').onclick = () => {
+        toast.classList.add('opacity-0', 'translate-y-2');
+        setTimeout(() => toast.remove(), 300);
+      };
+
+      container.appendChild(toast);
+
+      requestAnimationFrame(() => {
+        toast.classList.remove('opacity-0', 'translate-y-2');
+      });
+
+      if (duration > 0) {
+        setTimeout(() => {
+          if (toast.parentElement) {
+            toast.classList.add('opacity-0', 'translate-y-2');
+            setTimeout(() => toast.remove(), 300);
+          }
+        }, duration);
+      }
     }
 
     // =========================================================================
@@ -1317,7 +1479,7 @@
       if (content) content.classList.remove('hidden');
 
       if (tabId === 'veille') {
-        filterListings();
+        filterListings(false);
       }
 
       if (tabId === 'sources') {
@@ -1356,7 +1518,11 @@
 
     function testFbConnection() {
       const profilePath = document.getElementById('fbProfilePath').value;
-      alert("🔍 Test en cours...\nVérification du profil local Chrome : " + profilePath + "\n\n✅ Session détectée ! L'agent Antigravity peut accéder à Facebook et aux groupes NC sans saisie de mot de passe.");
+      showNotificationToast(
+        "Vérification du profil local Chrome",
+        `Session détectée (${profilePath}) !\nL'agent Sentinel peut accéder à Facebook et aux groupes NC.`,
+        "info"
+      );
     }
 
     function openAddFbGroupModal() {
@@ -1377,7 +1543,7 @@
         <span class="px-2 py-1 rounded bg-slate-800 text-[10px] text-slate-300">Groupe FB</span>
       `;
       list.appendChild(card);
-      alert("✅ Groupe Facebook '" + gName + "' ajouté à la liste des cibles de l'agent !");
+      showNotificationToast("Groupe Facebook Ajouté", `'${gName}' ajouté aux cibles de surveillance.`, "success");
     }
 
     // =========================================================================
@@ -1588,6 +1754,10 @@
 
     let isScanning = false;
 
+    function getApiBase() {
+      return (window.location.protocol === 'file:' || window.location.hostname === '') ? 'http://localhost:8080' : '';
+    }
+
     async function loadLiveBackendData() {
       try {
         // 1. Charge les annonces réelles (API REST locale ou snapshot statique cloud)
@@ -1714,7 +1884,12 @@
           await loadLiveBackendData();
           switchTab('veille');
 
-          alert(`🎉 ACTUALISATION 100% RÉELLE RÉUSSIE !\n\n• Annonces téléchargées en direct de NC : ${result.fetched_count}\n• Annonces validées et enregistrées : ${result.stored_cleaned}\n• Total des biens sous veille DuckDB : ${result.total_in_db}\n• Temps d'exécution : ${result.duration_seconds} secondes\n• Statut Audit : ${result.audit_status}`);
+          showNotificationToast(
+            "Actualisation 100% Réelle Réussie !",
+            `• Annonces téléchargées en direct : ${result.fetched_count}\n• Validées et enregistrées : ${result.stored_cleaned}\n• Total sous veille DuckDB : ${result.total_in_db}\n• Durée : ${result.duration_seconds}s\n• Intégrité : ${result.audit_status}`,
+            "success",
+            8000
+          );
         } else {
           statusDetail.textContent = `⚠️ Erreur lors de l'actualisation : ${result.error || 'inconnue'}`;
           appendTerminalLog(`[${new Date().toLocaleTimeString('fr-FR')}] [error] ${result.error}`);
@@ -1759,7 +1934,11 @@
 
         await loadLiveBackendData();
         switchTab('veille');
-        alert(`✅ Source '${name}' actualisée pour de vrai !\n\nFlux synchronisé avec DuckDB : ${result.total_in_db} annonces réelles sous veille.`);
+        showNotificationToast(
+          `Source '${name}' actualisée`,
+          `Flux synchronisé avec DuckDB : ${result.total_in_db} annonces réelles sous veille.`,
+          "success"
+        );
       } catch (err) {
         statusDetail.textContent = `⚠️ Erreur : ${err.message}`;
       }
@@ -1797,11 +1976,21 @@
           const db = aud.database_summary || {};
           const lg = aud.logs_summary || {};
           appendTerminalLog(`[${new Date().toLocaleTimeString('fr-FR')}] [auditor] Contrôle validé : ${db.total_listings} annonces en base, ${lg.error_count} erreurs.`);
-          alert(`🛡️ CONTRÔLE D'INTÉGRITÉ RÉEL (DUCKDB + LOGS) :\n\n• Statut : ${aud.status}\n• Annonces actives : ${db.active_listings || db.total_listings}\n• Erreurs détectées : ${lg.error_count}\n• Qualité des surfaces & prix : ${db.data_quality ? db.data_quality.valid_m2_ratio_pct : 100}%\n• Vues analytiques : Opérationnelles\n\nTous les scripts et flux fonctionnent de manière optimale.`);
+          showNotificationToast(
+            "Contrôle d'Intégrité Réel (DuckDB + Logs)",
+            `• Statut : ${aud.status}\n• Annonces actives : ${db.active_listings || db.total_listings}\n• Erreurs détectées : ${lg.error_count}\n• Qualité des surfaces & prix : ${db.data_quality ? db.data_quality.valid_m2_ratio_pct : 100}%\n• Vues analytiques : Opérationnelles`,
+            "success",
+            7000
+          );
           return;
         }
       } catch (e) {}
-      alert("🛡️ CONTRÔLE D'INTÉGRITÉ DU PIPELINE :\n\n• Statut : HEALTHY (Sain)\n• Données DuckDB : Opérationnelles\n• Erreurs : 0");
+      showNotificationToast(
+        "Contrôle d'Intégrité du Pipeline",
+        "• Statut : HEALTHY (Sain)\n• Données DuckDB : Opérationnelles\n• Erreurs : 0",
+        "info",
+        5000
+      );
     }
 
     function toggleSourceStatus(id) {
@@ -1841,7 +2030,11 @@
       document.getElementById('addSourceForm').reset();
       renderSourcesTable();
       updateKPIs();
-      alert("✅ Nouvelle source '" + name + "' ajoutée ! Elle sera scrutée lors du prochain scan automatique.");
+      showNotificationToast(
+        "Nouvelle Source Ajoutée",
+        `La source '${name}' sera scrutée lors du prochain scan automatique.`,
+        "success"
+      );
     }
 
     // =========================================================================
@@ -1927,7 +2120,11 @@
       document.getElementById('manualForm').reset();
       switchTab('veille');
       filterListings();
-      alert("✅ L'annonce a été enregistrée et intégrée à votre veille !");
+      showNotificationToast(
+        "Annonce Enregistrée",
+        "L'annonce a été enregistrée et intégrée à votre veille !",
+        "success"
+      );
     }
 
     // =========================================================================
@@ -2065,7 +2262,208 @@
         .trim();
     }
 
-    function filterListings() {
+    // =========================================================================
+    // FILTRE DYNAMIQUE PAR INTERVALLE DE PRIX (SLIDER & PRESETS)
+    // =========================================================================
+    let priceScaleMode = 'VENTE'; // 'VENTE' ou 'LOCATION'
+    let priceFilterMin = 0;
+    let priceFilterMax = null; // null = Illimité
+    let activePricePreset = 'all';
+
+    const PRICE_CONFIGS = {
+      VENTE: {
+        maxSteps: 60,
+        stepValue: 2500000, // 2.5M par cran (jusqu'à 150M)
+        labelSuffix: ' F CFP',
+        defaultLabel: 'Tous les prix',
+        presets: [
+          { id: 'all', label: 'Tous les prix', min: 0, max: null },
+          { id: 'sub25m', label: '< 25M', min: 0, max: 25000000 },
+          { id: '25m_45m', label: '25M - 45M', min: 25000000, max: 45000000 },
+          { id: '45m_75m', label: '45M - 75M', min: 45000000, max: 75000000 },
+          { id: '75m_120m', label: '75M - 120M', min: 75000000, max: 120000000 },
+          { id: 'over120m', label: '> 120M', min: 120000000, max: null },
+        ]
+      },
+      LOCATION: {
+        maxSteps: 60,
+        stepValue: 5000, // 5k par cran (jusqu'à 300k)
+        labelSuffix: ' F CFP/m',
+        defaultLabel: 'Tous les loyers',
+        presets: [
+          { id: 'all', label: 'Tous les loyers', min: 0, max: null },
+          { id: 'sub90k', label: '< 90k', min: 0, max: 90000 },
+          { id: '90k_140k', label: '90k - 140k', min: 90000, max: 140000 },
+          { id: '140k_200k', label: '140k - 200k', min: 140000, max: 200000 },
+          { id: 'over200k', label: '> 200k', min: 200000, max: null },
+        ]
+      }
+    };
+
+    function formatPriceCompact(amount) {
+      if (amount === null || amount === Infinity) return 'Max';
+      if (amount >= 1000000) {
+        const val = amount / 1000000;
+        return (Number.isInteger(val) ? val.toString() : val.toFixed(1)) + ' M';
+      }
+      if (amount >= 1000) {
+        return Math.round(amount / 1000) + ' k';
+      }
+      return amount.toLocaleString('fr-FR');
+    }
+
+    function renderPricePresets() {
+      const container = document.getElementById('pricePresetChips');
+      if (!container) return;
+      const cfg = PRICE_CONFIGS[priceScaleMode] || PRICE_CONFIGS.VENTE;
+      
+      container.innerHTML = cfg.presets.map(p => {
+        const isActive = activePricePreset === p.id;
+        return `
+          <button 
+            type="button"
+            onclick="setPricePreset('${p.id}', ${p.min}, ${p.max !== null ? p.max : 'null'})" 
+            class="price-chip px-2.5 py-1 rounded-lg text-xs font-semibold border transition-all cursor-pointer ${
+              isActive 
+                ? 'bg-sky-600 text-white border-sky-400 shadow-md shadow-sky-600/30' 
+                : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border-slate-700/70'
+            }">
+            ${p.label}
+          </button>
+        `;
+      }).join('');
+    }
+
+    function updatePriceSliderUI() {
+      const minSlider = document.getElementById('priceMinSlider');
+      const maxSlider = document.getElementById('priceMaxSlider');
+      const highlight = document.getElementById('priceRangeHighlight');
+      const display = document.getElementById('priceDisplayLabel');
+      const resetBtn = document.getElementById('priceResetBtn');
+      const cfg = PRICE_CONFIGS[priceScaleMode] || PRICE_CONFIGS.VENTE;
+
+      if (!minSlider || !maxSlider) return;
+
+      const minVal = parseInt(minSlider.value, 10);
+      const maxVal = parseInt(maxSlider.value, 10);
+
+      const leftPct = (minVal / cfg.maxSteps) * 100;
+      const rightPct = ((cfg.maxSteps - maxVal) / cfg.maxSteps) * 100;
+
+      if (highlight) {
+        highlight.style.left = `${leftPct}%`;
+        highlight.style.right = `${rightPct}%`;
+      }
+
+      const isLoc = priceScaleMode === 'LOCATION';
+      const isFull = minVal === 0 && maxVal === cfg.maxSteps;
+
+      if (display) {
+        if (isFull) {
+          display.textContent = cfg.defaultLabel;
+          display.className = "font-mono font-bold text-slate-400 bg-slate-900/60 px-2.5 py-1 rounded-lg border border-slate-800 text-xs shadow-sm";
+        } else if (minVal === 0) {
+          display.textContent = `≤ ${formatPriceCompact(priceFilterMax, isLoc)}${cfg.labelSuffix}`;
+          display.className = "font-mono font-bold text-sky-400 bg-sky-950/60 px-2.5 py-1 rounded-lg border border-sky-500/30 text-xs shadow-sm";
+        } else if (maxVal === cfg.maxSteps) {
+          display.textContent = `≥ ${formatPriceCompact(priceFilterMin, isLoc)}${cfg.labelSuffix}`;
+          display.className = "font-mono font-bold text-sky-400 bg-sky-950/60 px-2.5 py-1 rounded-lg border border-sky-500/30 text-xs shadow-sm";
+        } else {
+          display.textContent = `${formatPriceCompact(priceFilterMin, isLoc)} — ${formatPriceCompact(priceFilterMax, isLoc)}${cfg.labelSuffix}`;
+          display.className = "font-mono font-bold text-emerald-400 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-500/30 text-xs shadow-sm";
+        }
+      }
+
+      if (resetBtn) {
+        if (isFull) {
+          resetBtn.classList.add('hidden');
+        } else {
+          resetBtn.classList.remove('hidden');
+        }
+      }
+
+      renderPricePresets();
+    }
+
+    function onPriceSliderChange(which) {
+      const minSlider = document.getElementById('priceMinSlider');
+      const maxSlider = document.getElementById('priceMaxSlider');
+      const cfg = PRICE_CONFIGS[priceScaleMode] || PRICE_CONFIGS.VENTE;
+      if (!minSlider || !maxSlider) return;
+
+      let minVal = parseInt(minSlider.value, 10);
+      let maxVal = parseInt(maxSlider.value, 10);
+
+      if (which === 'min' && minVal > maxVal) {
+        minSlider.value = maxVal;
+        minVal = maxVal;
+      } else if (which === 'max' && maxVal < minVal) {
+        maxSlider.value = minVal;
+        maxVal = minVal;
+      }
+
+      priceFilterMin = minVal * cfg.stepValue;
+      priceFilterMax = maxVal === cfg.maxSteps ? null : maxVal * cfg.stepValue;
+      activePricePreset = (minVal === 0 && maxVal === cfg.maxSteps) ? 'all' : 'custom';
+
+      updatePriceSliderUI();
+      filterListings(true);
+    }
+
+    function setPricePreset(presetId, minAmount, maxAmount) {
+      const cfg = PRICE_CONFIGS[priceScaleMode] || PRICE_CONFIGS.VENTE;
+      const minSlider = document.getElementById('priceMinSlider');
+      const maxSlider = document.getElementById('priceMaxSlider');
+
+      activePricePreset = presetId;
+      priceFilterMin = minAmount;
+      priceFilterMax = maxAmount;
+
+      if (minSlider && maxSlider) {
+        minSlider.value = Math.min(cfg.maxSteps, Math.max(0, Math.round(minAmount / cfg.stepValue)));
+        maxSlider.value = maxAmount === null ? cfg.maxSteps : Math.min(cfg.maxSteps, Math.max(0, Math.round(maxAmount / cfg.stepValue)));
+      }
+
+      updatePriceSliderUI();
+      filterListings(true);
+    }
+
+    function resetPriceFilter() {
+      setPricePreset('all', 0, null);
+    }
+
+    function onTransactionFilterChange() {
+      const sel = document.getElementById('transactionFilter');
+      const val = sel ? sel.value : 'all';
+      if (val === 'LOCATION') {
+        priceScaleMode = 'LOCATION';
+      } else {
+        priceScaleMode = 'VENTE';
+      }
+
+      const cfg = PRICE_CONFIGS[priceScaleMode];
+      const minSlider = document.getElementById('priceMinSlider');
+      const maxSlider = document.getElementById('priceMaxSlider');
+      if (minSlider) {
+        minSlider.max = cfg.maxSteps;
+        minSlider.value = 0;
+      }
+      if (maxSlider) {
+        maxSlider.max = cfg.maxSteps;
+        maxSlider.value = cfg.maxSteps;
+      }
+      activePricePreset = 'all';
+      priceFilterMin = 0;
+      priceFilterMax = null;
+
+      updatePriceSliderUI();
+      filterListings(true);
+    }
+
+    function filterListings(resetPage = true) {
+      if (resetPage) {
+        currentPage = 1;
+      }
       const search = normStr(document.getElementById('searchInput')?.value);
       const transaction = document.getElementById('transactionFilter')?.value || 'all';
       const commune = normStr(document.getElementById('communeFilter')?.value);
@@ -2121,7 +2519,18 @@
           normStr(item.description).includes(search) ||
           (item.agencyPhone && item.agencyPhone.includes(search));
 
-        return matchesCategory && matchesCommune && matchesTransaction && matchesAgency && matchesRoomType && matchesFurnished && matchesOpp && matchesSearch;
+        let matchesPrice = true;
+        if (priceFilterMin > 0 || priceFilterMax !== null) {
+          const p = item.currentPrice || 0;
+          if (p <= 0) {
+            matchesPrice = false;
+          } else {
+            if (priceFilterMin > 0 && p < priceFilterMin) matchesPrice = false;
+            if (priceFilterMax !== null && p > priceFilterMax) matchesPrice = false;
+          }
+        }
+
+        return matchesCategory && matchesCommune && matchesTransaction && matchesAgency && matchesRoomType && matchesFurnished && matchesOpp && matchesSearch && matchesPrice;
       });
 
       // Gestion de la bannière active KPI
@@ -2165,8 +2574,147 @@
         return new Date(b.dateAdded) - new Date(a.dateAdded);
       });
 
-      renderListings(filtered);
+      currentFilteredListings = filtered;
+      renderCurrentPageListings();
       updateKPIs();
+    }
+
+    function renderCurrentPageListings() {
+      const total = currentFilteredListings.length;
+      const pagContainer = document.getElementById('paginationContainer');
+      const pagStart = document.getElementById('pagStart');
+      const pagEnd = document.getElementById('pagEnd');
+      const pagTotal = document.getElementById('pagTotal');
+
+      if (total === 0) {
+        renderListings([]);
+        if (pagContainer) pagContainer.classList.add('hidden');
+        return;
+      }
+
+      if (pagContainer) pagContainer.classList.remove('hidden');
+
+      let itemsToRender = [];
+      let start = 1;
+      let end = total;
+      let totalPages = 1;
+
+      if (pageSize === 'all') {
+        itemsToRender = currentFilteredListings;
+        totalPages = 1;
+        currentPage = 1;
+        start = 1;
+        end = total;
+      } else {
+        const numPerPage = parseInt(pageSize, 10);
+        totalPages = Math.ceil(total / numPerPage) || 1;
+        if (currentPage > totalPages) currentPage = totalPages;
+        if (currentPage < 1) currentPage = 1;
+
+        const startIndex = (currentPage - 1) * numPerPage;
+        itemsToRender = currentFilteredListings.slice(startIndex, startIndex + numPerPage);
+        start = startIndex + 1;
+        end = Math.min(startIndex + numPerPage, total);
+      }
+
+      if (pagStart) pagStart.textContent = start.toLocaleString('fr-FR');
+      if (pagEnd) pagEnd.textContent = end.toLocaleString('fr-FR');
+      if (pagTotal) pagTotal.textContent = total.toLocaleString('fr-FR');
+
+      renderPaginationButtons(totalPages);
+      renderListings(itemsToRender);
+    }
+
+    function renderPaginationButtons(totalPages) {
+      const container = document.getElementById('paginationButtons');
+      if (!container) return;
+
+      if (totalPages <= 1) {
+        container.innerHTML = '';
+        return;
+      }
+
+      let html = '';
+
+      // Bouton Précédent
+      const prevDisabled = currentPage <= 1;
+      html += `
+        <button onclick="goToPage(${currentPage - 1})" ${prevDisabled ? 'disabled class="px-2.5 py-1.5 rounded-lg bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors text-xs font-semibold cursor-pointer"'} title="Page précédente">
+          ◀ Précédent
+        </button>
+      `;
+
+      // Liste des numéros de pages
+      const pagesToShow = [];
+      if (totalPages <= 7) {
+        for (let i = 1; i <= totalPages; i++) pagesToShow.push(i);
+      } else {
+        pagesToShow.push(1);
+        let startWin = Math.max(2, currentPage - 1);
+        let endWin = Math.min(totalPages - 1, currentPage + 1);
+
+        if (currentPage <= 3) {
+          startWin = 2;
+          endWin = 4;
+        } else if (currentPage >= totalPages - 2) {
+          startWin = totalPages - 3;
+          endWin = totalPages - 1;
+        }
+
+        if (startWin > 2) {
+          pagesToShow.push('...');
+        }
+
+        for (let i = startWin; i <= endWin; i++) {
+          pagesToShow.push(i);
+        }
+
+        if (endWin < totalPages - 1) {
+          pagesToShow.push('...');
+        }
+
+        pagesToShow.push(totalPages);
+      }
+
+      pagesToShow.forEach(item => {
+        if (item === '...') {
+          html += `<span class="px-1.5 text-slate-500 text-xs font-bold select-none">...</span>`;
+        } else if (item === currentPage) {
+          html += `<button class="w-8 h-8 rounded-lg bg-sky-500 text-white font-bold text-xs shadow-md shadow-sky-500/30 flex items-center justify-center">${item}</button>`;
+        } else {
+          html += `<button onclick="goToPage(${item})" class="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/60 font-semibold text-xs transition-colors flex items-center justify-center cursor-pointer">${item}</button>`;
+        }
+      });
+
+      // Bouton Suivant
+      const nextDisabled = currentPage >= totalPages;
+      html += `
+        <button onclick="goToPage(${currentPage + 1})" ${nextDisabled ? 'disabled class="px-2.5 py-1.5 rounded-lg bg-slate-800/40 text-slate-600 border border-slate-800 cursor-not-allowed text-xs font-semibold"' : 'class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 hover:border-slate-600 transition-colors text-xs font-semibold cursor-pointer"'} title="Page suivante">
+          Suivant ▶
+        </button>
+      `;
+
+      container.innerHTML = html;
+    }
+
+    function goToPage(pageNum) {
+      const numPerPage = pageSize === 'all' ? currentFilteredListings.length : parseInt(pageSize, 10);
+      const totalPages = Math.ceil(currentFilteredListings.length / (numPerPage || 1)) || 1;
+      if (pageNum < 1) pageNum = 1;
+      if (pageNum > totalPages) pageNum = totalPages;
+      currentPage = pageNum;
+      renderCurrentPageListings();
+
+      const scrollTarget = document.getElementById('kpiActiveBanner') || document.getElementById('listingsGrid') || document.getElementById('tabContentVeille');
+      if (scrollTarget) {
+        scrollTarget.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function changePageSize(newVal) {
+      pageSize = newVal === 'all' ? 'all' : parseInt(newVal, 10);
+      currentPage = 1;
+      renderCurrentPageListings();
     }
 
     function renderListings(items) {
@@ -3655,6 +4203,7 @@
     // INITIALISATION AU CHARGEMENT
     // =========================================================================
     window.addEventListener('DOMContentLoaded', () => {
+      updatePriceSliderUI();
       filterListings();
       renderSourcesTable();
       updateAvmQuartiers();
