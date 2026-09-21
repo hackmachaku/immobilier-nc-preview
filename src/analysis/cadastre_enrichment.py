@@ -527,6 +527,39 @@ class CadastreSpatialIndex:
         except (ValueError, TypeError):
             return item
 
+        # Garde-fou foncier : Si le score de précision géographique est de niveau quartier (<= 50%),
+        # la localisation est une approximation sectorielle (~500m d'incertitude).
+        # On ne doit PAS attribuer arbitrairement la parcelle ou l'immeuble situés sous le centroïde !
+        prec_score = item.get("precisionScore")
+        if prec_score is None:
+            prec_score = item.get("precision_score")
+
+        is_approx_quartier = False
+        if prec_score is not None:
+            try:
+                is_approx_quartier = float(prec_score) <= 50.0
+            except (ValueError, TypeError):
+                pass
+
+        item["isCadastreCertifie"] = not is_approx_quartier
+
+        if is_approx_quartier:
+            item["cadastreStatus"] = "INDICATIF_QUARTIER"
+            item["cadastreComment"] = "Localisation indicative à l'échelle du quartier (~500m). Parcelle exacte et copropriété non certifiables sans adresse ou nom de résidence."
+            item["cadastreNic"] = None
+            item["cadastreLot"] = None
+            item["cadastreLotissement"] = None
+            item["cadastreSection"] = str(item.get("quartier") or item.get("commune") or "Secteur NC")
+            item["cadastreCommune"] = str(item.get("commune") or "Nouméa")
+            item["cadastreContenance"] = None
+            item["cadastreSurfaceM2"] = None
+            item["cadastreTypologie"] = "Zone Urbaine Mixte"
+            item["surfaceEcartLabel"] = None
+            item["refilNom"] = None
+            item["refilType"] = None
+            item["refilAdresse"] = None
+            return item
+
         # 1. Parcelle Cadastrale
         parcel, p_dist = self.find_nearest_parcel(lat, lon, max_dist_m=120.0)
         if parcel:

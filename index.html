@@ -3427,47 +3427,63 @@
 
           <!-- BLOC FONCIER, CADASTRE & URBANISME OFFICIEL (GOUV NC) -->
           <div class="p-5 rounded-2xl bg-gradient-to-br from-slate-900 via-slate-950 to-slate-900 border border-emerald-500/30 space-y-4 shadow-lg">
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b border-emerald-900/40">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-3 border-b ${item.precisionScore <= 50 ? 'border-slate-800' : 'border-emerald-900/40'}">
               <div class="flex items-center gap-2.5">
-                <div class="w-8 h-8 rounded-lg bg-emerald-500/20 text-emerald-400 flex items-center justify-center font-bold text-base shadow-inner">
+                <div class="w-8 h-8 rounded-lg ${item.precisionScore <= 50 ? 'bg-slate-800 text-slate-400' : 'bg-emerald-500/20 text-emerald-400'} flex items-center justify-center font-bold text-base shadow-inner">
                   🏛️
                 </div>
                 <div>
                   <h4 class="text-sm font-bold text-white flex items-center gap-2">
                     Foncier, Cadastre & Urbanisme Officiel
-                    <span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Gouv NC</span>
+                    ${item.precisionScore <= 50 
+                      ? `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700">⚪ Précision Secteur</span>`
+                      : `<span class="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">🟢 Parcelle Certifiée</span>`}
                   </h4>
                   <p class="text-[11px] text-slate-400">Données issues de la DITTT, cadastre.gouv.nc et de l'Open Data Nouvelle-Calédonie</p>
                 </div>
               </div>
               <div class="flex items-center gap-2 flex-wrap">
-                ${item.cadastreNic ? `
+                ${(item.precisionScore > 50 && item.cadastreNic) ? `
                   <span class="font-mono text-xs font-bold text-emerald-300 bg-emerald-950/60 px-2.5 py-1 rounded-lg border border-emerald-700/50">
                     NIC : ${item.cadastreNic}
                   </span>
                 ` : `
-                  <span class="text-xs text-slate-400 bg-slate-800 px-2.5 py-1 rounded-lg">Non cadastrable</span>
+                  <span class="text-xs text-slate-400 bg-slate-800/80 border border-slate-700 px-2.5 py-1 rounded-lg flex items-center gap-1.5" title="L'agence n'ayant pas mentionné d'adresse exacte ni de nom de résidence, la parcelle précise n'est pas certifiée.">
+                    <span>⚪ Parcelle non certifiable sans adresse</span>
+                  </span>
                 `}
                 ${(item.lat && item.lon) ? `
-                  <button onclick="viewOnMapAndTrace(${item.lat}, ${item.lon})" class="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40 text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer">
-                    <span>🗺️ Voir & Détourer sur la Carte</span>
+                  <button onclick="viewOnMapAndTrace(${item.lat}, ${item.lon}, ${item.precisionScore > 50})" class="px-3 py-1 rounded-lg ${item.precisionScore <= 50 ? 'bg-sky-500/20 hover:bg-sky-500 text-sky-300 hover:text-slate-950 border border-sky-500/40' : 'bg-amber-500/20 hover:bg-amber-500 text-amber-300 hover:text-slate-950 border border-amber-500/40'} text-xs font-bold transition-all flex items-center gap-1.5 shadow-sm cursor-pointer">
+                    <span>${item.precisionScore <= 50 ? '🗺️ Voir le Secteur sur la Carte' : '🗺️ Voir & Détourer sur la Carte'}</span>
                   </button>
                 ` : ''}
               </div>
             </div>
 
+            ${item.precisionScore <= 50 ? `
+              <!-- AVERTISSEMENT PRÉCISION SECTEUR -->
+              <div class="p-3 rounded-xl bg-slate-800/40 border border-slate-700/60 text-xs flex items-start gap-2.5">
+                <span class="text-base shrink-0 mt-0.5">ℹ️</span>
+                <div class="text-[11.5px] text-slate-300 leading-relaxed">
+                  <strong class="text-white">Localisation indicative à l'échelle du secteur (${item.quartier || item.commune}) :</strong>
+                  L'agence immobilière n'ayant pas communiqué d'adresse précise, de nom de copropriété ou de référence cadastrale, ce bien est positionné au centre du quartier (marge d'incertitude : ~300 à 800 m).
+                  Le lot cadastral individuel et la copropriété exacte ne peuvent pas être certifiés sans adresse.
+                </div>
+              </div>
+            ` : ''}
+
             <!-- TUILES CADASTRE ET REFIL -->
             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
               <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                 <span class="text-[10px] text-slate-400 block font-medium">Référence Cadastrale</span>
-                <span class="font-bold text-white text-sm block mt-0.5">${item.cadastreLot ? 'Lot N° ' + item.cadastreLot : 'Parcelle active'}</span>
-                <span class="text-[10px] text-emerald-400 block mt-0.5 truncate">${item.cadastreLotissement || item.cadastreSection || 'Section non nommée'}</span>
+                <span class="font-bold text-white text-sm block mt-0.5">${item.precisionScore > 50 && item.cadastreLot ? 'Lot N° ' + item.cadastreLot : (item.precisionScore <= 50 ? 'Non certifiée' : 'Parcelle active')}</span>
+                <span class="text-[10px] ${item.precisionScore > 50 ? 'text-emerald-400' : 'text-slate-400'} block mt-0.5 truncate">${item.precisionScore > 50 ? (item.cadastreLotissement || item.cadastreSection || 'Section non nommée') : 'Nécessite adresse exacte'}</span>
               </div>
 
               <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
                 <span class="text-[10px] text-slate-400 block font-medium">Contenance Légale (Acte)</span>
-                <span class="font-bold text-white text-sm block mt-0.5">${item.cadastreContenance || (item.cadastreSurfaceM2 ? item.cadastreSurfaceM2.toLocaleString('fr-FR') + ' m²' : 'N/C')}</span>
-                <span class="text-[10px] text-slate-400 block mt-0.5">${item.cadastreSurfaceM2 ? '~ ' + Math.round(item.cadastreSurfaceM2).toLocaleString('fr-FR') + ' m² SIG' : 'Surface acte officiel'}</span>
+                <span class="font-bold text-white text-sm block mt-0.5">${item.precisionScore > 50 && item.cadastreContenance ? item.cadastreContenance : (item.precisionScore > 50 && item.cadastreSurfaceM2 ? item.cadastreSurfaceM2.toLocaleString('fr-FR') + ' m²' : (item.precisionScore <= 50 ? 'Non rattachée' : 'N/C'))}</span>
+                <span class="text-[10px] text-slate-400 block mt-0.5">${item.precisionScore > 50 && item.cadastreSurfaceM2 ? '~ ' + Math.round(item.cadastreSurfaceM2).toLocaleString('fr-FR') + ' m² SIG' : (item.precisionScore <= 50 ? 'Inconnue sans lot' : 'Surface acte officiel')}</span>
               </div>
 
               <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
@@ -3484,7 +3500,7 @@
             </div>
 
             <!-- DIAGNOSTIC DE SURFACE & COHÉRENCE -->
-            ${item.surfaceEcartLabel ? `
+            ${(item.precisionScore > 50 && item.surfaceEcartLabel) ? `
               <div class="p-3 rounded-xl ${item.surfaceEcartStatus === 'CONFORME' ? 'bg-emerald-950/30 border-emerald-500/30 text-emerald-300' : (item.surfaceEcartStatus === 'COPROPRIETE' ? 'bg-slate-900/60 border-slate-700/60 text-slate-300' : (item.surfaceEcartStatus === 'ECART_MINEUR' ? 'bg-sky-950/30 border-sky-500/30 text-sky-300' : 'bg-amber-950/30 border-amber-500/30 text-amber-300'))} border flex items-center justify-between text-xs flex-wrap gap-2">
                 <div class="flex items-center gap-2">
                   <span class="font-bold">${item.surfaceEcartLabel}</span>
@@ -3498,7 +3514,7 @@
             ` : ''}
 
             <!-- REFIL : INFORMATIONS IMMEUBLE & COPROPRIÉTÉ -->
-            ${item.refilNom ? `
+            ${(item.precisionScore > 50 && item.refilNom) ? `
               <div class="p-3.5 rounded-xl bg-indigo-950/30 border border-indigo-500/30 space-y-2">
                 <div class="flex items-center justify-between text-xs">
                   <span class="font-bold text-indigo-300 flex items-center gap-1.5">
@@ -4013,23 +4029,31 @@
       }
     }
 
-    function viewOnMapAndTrace(lat, lon) {
+    function viewOnMapAndTrace(lat, lon, trace = true) {
       closeDetailModal();
       switchTab('carte');
       
       const doTrace = () => {
         if (leafletMapInstance) {
           leafletMapInstance.invalidateSize();
-          leafletMapInstance.setView([lat, lon], 17);
-          setTimeout(() => {
-            showCadastreParcelPolygon(lat, lon, true);
-          }, 250);
+          leafletMapInstance.setView([lat, lon], trace ? 17 : 16);
+          if (trace) {
+            setTimeout(() => {
+              showCadastreParcelPolygon(lat, lon, true);
+            }, 250);
+          } else {
+            showNotificationToast('📍 Secteur Géographique', 'Centrage sur la zone indicative de l\'annonce (~500m de marge).', 'info', 3500);
+          }
         } else {
           initLeafletMap();
           setTimeout(() => {
             if (leafletMapInstance) {
-              leafletMapInstance.setView([lat, lon], 17);
-              showCadastreParcelPolygon(lat, lon, true);
+              leafletMapInstance.setView([lat, lon], trace ? 17 : 16);
+              if (trace) {
+                showCadastreParcelPolygon(lat, lon, true);
+              } else {
+                showNotificationToast('📍 Secteur Géographique', 'Centrage sur la zone indicative de l\'annonce (~500m de marge).', 'info', 3500);
+              }
             }
           }, 350);
         }
@@ -4344,7 +4368,7 @@
                 <span style="font-size: 9px; color: #94a3b8;">${item.photoBadge || ''}</span>
               </div>
             ` : ''}
-            ${(item.cadastreNic || item.cadastre_nic) ? `
+            ${(item.precisionScore > 50 && (item.cadastreNic || item.cadastre_nic)) ? `
               <div style="font-size: 10px; color: #38bdf8; background: rgba(14, 165, 233, 0.12); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 6px; padding: 4px 6px; margin-bottom: 6px;">
                 <div style="font-weight: 700; display: flex; align-items: center; gap: 4px;">
                   <span>🏛️ Cadastre : NIC ${item.cadastreNic || item.cadastre_nic}</span>
@@ -4354,14 +4378,18 @@
                   <span>${(item.cadastreSurfaceM2 || item.cadastre_contenance_m2) ? (item.cadastreSurfaceM2 || item.cadastre_contenance_m2).toLocaleString('fr-FR') + ' m² officiels' : ''}</span>
                 </div>
               </div>
-            ` : ''}
-            ${(item.refilNom || item.refil_residence) ? `
+            ` : (item.precisionScore <= 50 ? `
+              <div style="font-size: 9.5px; color: #94a3b8; background: rgba(15, 23, 42, 0.6); border: 1px dashed rgba(148, 163, 184, 0.25); border-radius: 6px; padding: 3px 6px; margin-bottom: 6px; display: flex; align-items: center; gap: 4px;">
+                <span>📍 Repère indicatif de secteur (~500m)</span>
+              </div>
+            ` : '')}
+            ${(item.precisionScore > 50 && (item.refilNom || item.refil_residence)) ? `
               <div style="font-size: 10px; color: #c084fc; background: rgba(139, 92, 246, 0.12); border: 1px solid rgba(139, 92, 246, 0.3); border-radius: 6px; padding: 4px 6px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;">
                 <span style="font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">🏢 ${item.refilNom || item.refil_residence}</span>
                 <span style="font-size: 9.5px; color: #cbd5e1; margin-left: 4px;">${item.refilLivraison || item.refil_annee_construction || ''}</span>
               </div>
             ` : ''}
-            ${(item.surfaceEcartLabel || (item.surface_discrepancy && item.surface_discrepancy.status !== 'NOT_APPLICABLE')) ? `
+            ${(item.precisionScore > 50 && (item.surfaceEcartLabel || (item.surface_discrepancy && item.surface_discrepancy.status !== 'NOT_APPLICABLE'))) ? `
               <div style="font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-bottom: 6px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
                 ${item.surfaceEcartLabel || (item.surface_discrepancy && item.surface_discrepancy.label)}
               </div>
@@ -4371,10 +4399,12 @@
               <span>Source : ${item.source || 'Immo NC'}</span>
             </div>
             <div style="display: flex; gap: 6px;">
-              <button onclick="event.stopPropagation(); showCadastreParcelPolygon(${item.lat}, ${item.lon}, true);" style="flex: 1; padding: 6px 8px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Tracer le contour officiel de la parcelle cadastrale">
-                <span>🏛️ Détourer Lot</span>
-              </button>
-              <button onclick="openDetailModal('${item.id}')" style="flex: 1; padding: 6px 8px; background: #0284c7; color: white; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.background='#0369a1'" onmouseout="this.style.background='#0284c7'">
+              ${item.precisionScore > 50 ? `
+                <button onclick="event.stopPropagation(); showCadastreParcelPolygon(${item.lat}, ${item.lon}, true);" style="flex: 1; padding: 6px 8px; background: rgba(245, 158, 11, 0.2); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45); border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px;" title="Tracer le contour officiel de la parcelle cadastrale">
+                  <span>🏛️ Détourer Lot</span>
+                </button>
+              ` : ''}
+              <button onclick="openDetailModal('${item.id}')" style="${item.precisionScore <= 50 ? 'width: 100%' : 'flex: 1'}; padding: 6px 8px; background: #0284c7; color: white; border: none; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 4px; transition: background 0.2s;" onmouseover="this.style.background='#0369a1'" onmouseout="this.style.background='#0284c7'">
                 <span>👁️ Fiche & Photos</span>
               </button>
             </div>

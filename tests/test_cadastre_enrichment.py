@@ -159,3 +159,23 @@ class TestCadastreSpatialEnrichment:
         assert len(results) == 2
         assert results[0].get("cadastreNic") is not None
         assert "cadastreNic" not in results[1]
+
+    def test_enrich_with_low_precision_score_does_not_assign_parcel(self, spatial_index):
+        listing = {
+            "id": "apt_approx_quartier",
+            "title": "Studio au Quartier Latin",
+            "propertyType": "APPARTEMENT",
+            "commune": "Nouméa",
+            "quartier": "Quartier Latin",
+            "lat": -22.2764,
+            "lon": 166.4443,
+            "precisionScore": 40,
+            "precisionLevel": "QUARTIER_DEFAULT",
+        }
+        enriched = spatial_index.enrich_listing(listing)
+        assert enriched.get("isCadastreCertifie") is False
+        assert enriched.get("cadastreNic") is None
+        assert enriched.get("cadastreLot") is None
+        assert enriched.get("refilNom") is None
+        assert enriched.get("cadastreStatus") == "INDICATIF_QUARTIER"
+
