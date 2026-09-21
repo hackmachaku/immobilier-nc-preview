@@ -23,6 +23,15 @@ from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
 from src.processing.description_structurer import structure_description
+from src.processing.ai_enricher import (
+    check_ai_status,
+    get_ai_config,
+    save_ai_config,
+    enrich_listing_with_ai,
+    ask_ai_chat,
+    clear_ai_cache,
+    get_ai_cache_stats
+)
 import ssl
 import urllib.request
 
@@ -277,6 +286,10 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
         if path == "/api/listings":
             return self.handle_get_listings()
+        elif path == "/api/ai/status":
+            return self._send_json(check_ai_status())
+        elif path == "/api/ai/config":
+            return self._send_json(get_ai_config())
         elif path == "/api/cadastre/parcel-polygon":
             return self.handle_get_parcel_polygon()
         elif path == "/api/cadastre/pud-rules":
@@ -301,8 +314,92 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             return self.handle_post_refresh()
         elif path == "/api/enrich/geoloc":
             return self.handle_post_enrich_geoloc()
+        elif path == "/api/ai/config":
+            return self.handle_post_ai_config()
+        elif path == "/api/ai/enrich":
+            return self.handle_post_ai_enrich()
+        elif path == "/api/ai/chat":
+            return self.handle_post_ai_chat()
+        elif path == "/api/ai/cache/clear":
+            return self.handle_post_ai_cache_clear()
 
         self._send_json({"error": "Endpoint not found"}, status_code=404)
+
+    def handle_post_ai_config(self):
+        """Met à jour et sauvegarde la configuration de l'IA (prompts, presets, modèle)."""
+        content_len = int(self.headers.get("Content-Length", 0))
+        body = {}
+        if content_len > 0:
+            try:
+                body = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                pass
+        updated = save_ai_config(body)
+        self._send_json({"success": True, "config": updated})
+
+    def handle_post_ai_enrich(self):
+        """Enrichit sémantiquement une annonce ou un texte brut via IA locale ou Tier-1."""
+        content_len = int(self.headers.get("Content-Length", 0))
+        body = {}
+        if content_len > 0:
+            try:
+                body = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                pass
+
+        listing_input = body.get("listing") or body.get("text") or body.get("id") or ""
+        custom_prompt = body.get("prompt")
+        custom_model = body.get("model")
+        force_refresh = bool(body.get("force_refresh", False))
+
+        # Si un ID de listing est transmis, récupérer l'annonce réelle en base
+        if isinstance(listing_input, str) and not body.get("text"):
+            try:
+                db = PropertyDatabase(read_only=True)
+                df = db.query(f"SELECT * FROM listings WHERE id = '{listing_input}' LIMIT 1")
+                if not df.empty:
+                    listing_input = df.iloc[0].to_dict()
+            except Exception:
+                pass
+
+        result = enrich_listing_with_ai(
+            listing_input,
+            custom_prompt=custom_prompt,
+            custom_model=custom_model,
+            force_refresh=force_refresh
+        )
+        self._send_json({"success": True, "data": result})
+
+    def handle_post_ai_chat(self):
+        """Répond à une question libre sur un bien sélectionné."""
+        content_len = int(self.headers.get("Content-Length", 0))
+        body = {}
+        if content_len > 0:
+            try:
+                body = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                pass
+
+        listing_data = body.get("listing") or body.get("text") or {}
+        question = str(body.get("question") or "")
+        custom_model = body.get("model")
+
+        if isinstance(listing_data, str):
+            try:
+                db = PropertyDatabase(read_only=True)
+                df = db.query(f"SELECT * FROM listings WHERE id = '{listing_data}' LIMIT 1")
+                if not df.empty:
+                    listing_data = df.iloc[0].to_dict()
+            except Exception:
+                pass
+
+        chat_resp = ask_ai_chat(listing_data, question, custom_model=custom_model)
+        self._send_json({"success": True, "data": chat_resp})
+
+    def handle_post_ai_cache_clear(self):
+        """Réinitialise le cache DuckDB des enrichissements IA."""
+        cleared = clear_ai_cache()
+        self._send_json({"success": cleared, "message": "Cache d'enrichissement IA vidé avec succès."})
 
     def handle_post_enrich_geoloc(self):
         """Déclenche l'enrichissement haute précision EXIF / REFIL / Cadastre en arrière-plan."""

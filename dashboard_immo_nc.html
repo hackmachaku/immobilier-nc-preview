@@ -235,6 +235,10 @@
       <button onclick="switchTab('guide')" id="navGuide" class="nav-tab px-4 py-2.5 rounded-xl text-xs md:text-sm font-medium bg-[var(--card)] text-slate-300 hover:bg-slate-800 hover:text-white border border-[var(--border)] flex items-center gap-2 transition-all">
         <span>📚 Lexique & Astuces NC</span>
       </button>
+      <button onclick="switchTab('ia')" id="navIa" class="nav-tab px-4 py-2.5 rounded-xl text-xs md:text-sm font-medium bg-[var(--card)] text-slate-300 hover:bg-slate-800 hover:text-white border border-[var(--border)] flex items-center gap-2 transition-all">
+        <span>🤖 Studio & Configuration IA</span>
+        <span id="aiNavStatusDot" class="inline-block w-2 h-2 rounded-full bg-slate-500"></span>
+      </button>
     </nav>
 
     <!-- STATS SUMMARY CARDS (Interactifs & Cliquables pour filtrage instantané) -->
@@ -1248,6 +1252,368 @@
       </div>
     </section>
 
+    <!-- ===================================================================== -->
+    <!-- SECTION: STUDIO & PARAMÉTRAGE IA SENTINEL (PLAYGROUND & CONFIGURATION)-->
+    <!-- ===================================================================== -->
+    <section id="tabContentIa" class="hidden space-y-6">
+      <!-- HEADER BANNER -->
+      <div class="p-6 rounded-2xl bg-gradient-to-r from-slate-900 via-purple-950/40 to-slate-900 border border-purple-500/30 shadow-xl relative overflow-hidden">
+        <div class="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="px-2.5 py-0.5 rounded-full text-[11px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 tracking-wide uppercase">
+                Laboratoire Sémantique Sentinel
+              </span>
+              <span id="aiEngineStatusBadge" class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5">
+                <span id="aiEngineStatusPulse" class="w-2 h-2 rounded-full bg-slate-400"></span>
+                <span id="aiEngineStatusText">Vérification de la connexion...</span>
+              </span>
+            </div>
+            <h2 class="text-xl md:text-2xl font-bold text-white tracking-tight flex items-center gap-2">
+              <span>🤖 Studio & Paramétrage IA Locale</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30">Tier-2 LLM + Tier-1 Déterministe</span>
+            </h2>
+            <p class="text-xs md:text-sm text-slate-300 mt-1 max-w-2xl leading-relaxed">
+              Configurez les modèles d'IA, adaptez les prompts métiers et testez l'extraction sémantique en direct sur n'importe quelle annonce du corpus calédonien.
+            </p>
+          </div>
+
+          <!-- Matériel GPU détecté -->
+          <div class="bg-slate-900/90 border border-slate-700/70 p-3 rounded-xl shrink-0 flex items-center gap-3">
+            <div class="w-10 h-10 rounded-lg bg-purple-500/20 text-purple-300 flex items-center justify-center text-lg">
+              🎮
+            </div>
+            <div class="text-xs">
+              <div class="text-slate-400 font-medium">Accélération Matérielle Détectée</div>
+              <div class="text-white font-bold" id="aiHardwareGpu">NVIDIA GTX 1060 6 Go GDDR5</div>
+              <div class="text-[11px] text-purple-300" id="aiHardwareVram">VRAM Utile : 4.9 Go • i7-8750H • 16 Go RAM</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GRID TOP : 1. PARAMÈTRES DU MOTEUR | 2. SYSTEM PROMPT & PRESETS -->
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
+        <!-- CARTE 1 : CONFIGURATION DU MOTEUR LLM -->
+        <div class="p-5 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-lg space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-lg bg-sky-500/10 text-sky-400 flex items-center justify-center font-bold">⚙️</div>
+              <div>
+                <h3 class="text-sm font-bold text-white">Moteur & Modèle Sélectionné</h3>
+                <p class="text-[11px] text-slate-400">Choix du LLM et mode d'exécution local</p>
+              </div>
+            </div>
+            <button onclick="pingAiEngine()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300 hover:text-white flex items-center gap-1.5 transition-all">
+              <span>🔄 Tester Ping</span>
+            </button>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Moteur d'exécution</label>
+              <select id="aiProviderSelect" onchange="onAiProviderChange()" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-[var(--border)] text-white focus:ring-1 focus:ring-purple-500">
+                <option value="ollama">🖥️ Ollama Local (Privé & Recommandé)</option>
+                <option value="deterministic">⚡ Mode Déterministe Tier-1 (Sans LLM)</option>
+                <option value="gemini_cloud">☁️ Google Gemini API (Cloud Optionnel)</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Modèle de langage (LLM)</label>
+              <select id="aiModelSelect" onchange="onAiModelChange()" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-[var(--border)] text-white focus:ring-1 focus:ring-purple-500">
+                <option value="qwen2.5:3b">🥇 Qwen 2.5 3B (2.15 Go VRAM • Idéal)</option>
+                <option value="qwen2.5:1.5b">🥈 Qwen 2.5 1.5B (1.35 Go VRAM • Ultra-Rapide)</option>
+                <option value="gemma2:2b">🥉 Gemma 2 2B (1.70 Go VRAM • Google DeepMind)</option>
+                <option value="ministral:3b">🇫🇷 Ministral 3B (2.25 Go VRAM • Mistral AI)</option>
+                <option value="glm4:latest">🇨🇳 GLM-4 9B (Zhipu AI / Tsinghua)</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div class="flex justify-between text-slate-300 font-semibold mb-1">
+                <span>Température</span>
+                <span id="aiTempLabel" class="text-purple-400 font-mono">0.1</span>
+              </div>
+              <input type="range" id="aiTempSlider" min="0.0" max="0.7" step="0.05" value="0.1" oninput="onAiTempChange(this.value)" class="w-full accent-purple-500 cursor-pointer">
+              <span class="text-[10px] text-slate-400">0.0 = Rigueur absolue (JSON strict), 0.5 = Plus créatif</span>
+            </div>
+
+            <div>
+              <label class="block text-slate-300 font-semibold mb-1">Délai d'attente (Circuit Breaker)</label>
+              <select id="aiTimeoutSelect" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-[var(--border)] text-white">
+                <option value="4.0">4.0 secondes (Recommandé)</option>
+                <option value="6.0">6.0 secondes</option>
+                <option value="10.0">10.0 secondes</option>
+              </select>
+              <span class="text-[10px] text-slate-400">Bascule Tier-1 si l'IA tarde à répondre</span>
+            </div>
+          </div>
+
+          <!-- Information de connectivité dynamique -->
+          <div id="aiConnectionInfoBox" class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 text-xs flex items-start gap-2.5">
+            <span class="text-base" id="aiConnectionInfoIcon">💡</span>
+            <div class="text-[11px] text-slate-300 leading-relaxed" id="aiConnectionInfoText">
+              Pour lancer Ollama en local : ouvrez un terminal et tapez <code class="px-1.5 py-0.5 rounded bg-slate-800 text-purple-300 font-mono">ollama run qwen2.5:3b</code>. En son absence, le système assure 100% des extractions via le moteur déterministe Tier-1.
+            </div>
+          </div>
+        </div>
+
+        <!-- CARTE 2 : SYSTEM PROMPT & PRESETS MÉTIERS -->
+        <div class="p-5 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-lg space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-lg bg-purple-500/10 text-purple-400 flex items-center justify-center font-bold">📝</div>
+              <div>
+                <h3 class="text-sm font-bold text-white">Éditeur de System Prompt & Règles</h3>
+                <p class="text-[11px] text-slate-400">Consignes directes données à l'IA sémantique</p>
+              </div>
+            </div>
+
+            <div class="flex items-center gap-1.5">
+              <button onclick="resetDefaultPrompt()" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-semibold text-slate-300 hover:text-white transition-all" title="Rétablir le prompt d'origine">
+                🔄 Rétablir
+              </button>
+              <button onclick="saveCurrentPrompt()" class="px-3 py-1 rounded-lg bg-purple-600 hover:bg-purple-500 text-xs font-semibold text-white shadow-md shadow-purple-600/30 transition-all flex items-center gap-1">
+                <span>💾 Enregistrer</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="space-y-2 text-xs">
+            <div class="flex items-center justify-between">
+              <label class="text-slate-300 font-semibold">Préréglages métiers (Presets)</label>
+              <span id="promptTokenCountBadge" class="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">~280 tokens</span>
+            </div>
+            <div class="flex flex-wrap gap-1.5" id="aiPromptPresetButtons">
+              <button onclick="applyPromptPreset('standard')" class="px-2.5 py-1 rounded-lg text-xs font-medium bg-purple-600 text-white border border-purple-400 transition-all">
+                🎯 Standard Immo NC
+              </button>
+              <button onclick="applyPromptPreset('commercial')" class="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
+                🏢 Tertiaire & Docks
+              </button>
+              <button onclick="applyPromptPreset('contacts_only')" class="px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all">
+                ⚡ Contacts Rapides
+              </button>
+            </div>
+
+            <div>
+              <textarea id="aiSystemPromptTextarea" rows="6" class="w-full p-3 rounded-xl bg-slate-900 border border-[var(--border)] text-slate-200 text-xs font-mono focus:ring-1 focus:ring-purple-500 custom-scrollbar leading-relaxed resize-y" placeholder="Saisissez vos consignes pour l'IA..."></textarea>
+            </div>
+            <p class="text-[11px] text-slate-400">
+              Ces consignes encadrent le respect strict du JSON et la gestion des cas particuliers (docks, varangues, numéros OPT à 6 chiffres).
+            </p>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- SECTION CENTRALE : BANC D'ESSAI & PLAYGROUND INTERACTIF -->
+      <div class="p-6 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-xl space-y-5">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+          <div>
+            <h3 class="text-base font-bold text-white flex items-center gap-2">
+              <span>🧪 Banc d'Essai & Playground Interactif</span>
+              <span class="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30">Test en Direct</span>
+            </h3>
+            <p class="text-xs text-slate-400 mt-0.5">
+              Sélectionnez une annonce réelle ou saisissez du texte libre pour observer en direct l'extraction et la classification.
+            </p>
+          </div>
+
+          <!-- Bouton Lancer Analyse -->
+          <button onclick="runAiExtractionTest()" id="btnRunAiTest" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 to-sky-600 hover:from-purple-500 hover:to-sky-500 text-white text-xs md:text-sm font-bold shadow-lg shadow-purple-600/30 flex items-center gap-2 transition-all shrink-0">
+            <span id="btnRunAiTestIcon">⚡</span>
+            <span id="btnRunAiTestText">Lancer l'Analyse & Structuration IA</span>
+          </button>
+        </div>
+
+        <!-- SÉLECTEUR RAPIDE CAS D'ÉTUDE -->
+        <div class="space-y-2">
+          <div class="flex items-center justify-between text-xs">
+            <span class="font-semibold text-slate-300">Cas d'étude remarquables (1 clic) :</span>
+            <span class="text-slate-400 text-[11px]">Ou choisissez dans les <strong id="aiTotalListingsCount">2 683</strong> annonces</span>
+          </div>
+
+          <div class="flex flex-wrap gap-2">
+            <button onclick="loadFamousCase('pk6_manu')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-purple-900/50 hover:border-purple-500/50 border border-slate-700 text-slate-200 transition-all flex items-center gap-1.5">
+              <span>🏢</span>
+              <span>Bureau P.k. 6 (Manu – 98.72.66 • 26 MF)</span>
+            </button>
+            <button onclick="loadFamousCase('chatelin_voile')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-sky-900/50 hover:border-sky-500/50 border border-slate-700 text-slate-200 transition-all flex items-center gap-1.5">
+              <span>🏖️</span>
+              <span>F3 Anse Vata (Chatelin Laurent NGUYEN • Salle fitness)</span>
+            </button>
+            <button onclick="loadFamousCase('ducos_dock')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-amber-900/50 hover:border-amber-500/50 border border-slate-700 text-slate-200 transition-all flex items-center gap-1.5">
+              <span>🏭</span>
+              <span>Grand Dock Ducos ZI (Logistique & Triphasé)</span>
+            </button>
+            <button onclick="loadFamousCase('villa_tina')" class="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-emerald-900/50 hover:border-emerald-500/50 border border-slate-700 text-slate-200 transition-all flex items-center gap-1.5">
+              <span>🏡</span>
+              <span>Villa Tina Surleau (Piscine, Vue mer)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- SÉLECTEUR GÉNÉRAL DE LISTING OU TEXTE LIBRE -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+          <div class="md:col-span-1 space-y-2">
+            <label class="block text-slate-300 font-semibold">Toutes les annonces du corpus :</label>
+            <select id="aiListingSelect" onchange="onAiListingSelected()" class="w-full px-3 py-2 rounded-xl bg-slate-900 border border-[var(--border)] text-white focus:ring-1 focus:ring-purple-500">
+              <option value="">Chargement des annonces...</option>
+            </select>
+            <div id="aiSelectedListingMeta" class="p-3 rounded-xl bg-slate-900/60 border border-slate-800 text-[11px] space-y-1 text-slate-300">
+              <div class="font-bold text-white truncate" id="aiMetaTitle">Aucune annonce sélectionnée</div>
+              <div class="text-slate-400" id="aiMetaLoc">Localisation : -</div>
+              <div class="text-purple-300 font-semibold" id="aiMetaPrice">Prix : -</div>
+            </div>
+          </div>
+
+          <div class="md:col-span-2 space-y-2">
+            <div class="flex items-center justify-between">
+              <label class="text-slate-300 font-semibold">Texte brut de l'annonce à analyser :</label>
+              <button onclick="clearAiInputText()" class="text-[11px] text-slate-400 hover:text-slate-200">Effacer</button>
+            </div>
+            <textarea id="aiInputRawText" rows="6" class="w-full p-3 rounded-xl bg-slate-900 border border-[var(--border)] text-slate-200 text-xs font-mono focus:ring-1 focus:ring-purple-500 custom-scrollbar leading-relaxed" placeholder="Collez ici le descriptif d'une annonce ou sélectionnez-en une à gauche..."></textarea>
+          </div>
+        </div>
+
+        <!-- ZONE DES RÉSULTATS DE L'EXTRACTION -->
+        <div id="aiResultsContainer" class="space-y-4 pt-4 border-t border-slate-800 hidden">
+          <!-- BARRE DE BENCHMARK ET MÉTRIQUES -->
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
+            <div class="flex flex-wrap items-center gap-3">
+              <span class="px-2.5 py-1 rounded-lg bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30 flex items-center gap-1.5">
+                <span>🧠 Moteur :</span>
+                <strong id="aiMetricEngine">Tier-1</strong>
+              </span>
+              <span class="px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30 flex items-center gap-1.5">
+                <span>⏱️ Latence :</span>
+                <strong id="aiMetricLatency">0 ms</strong>
+              </span>
+              <span class="px-2.5 py-1 rounded-lg bg-emerald-500/20 text-emerald-300 font-semibold border border-emerald-500/30 flex items-center gap-1.5">
+                <span>⚡ Débit :</span>
+                <strong id="aiMetricToks">0 tok/s</strong>
+              </span>
+            </div>
+            <span id="aiMetricCachedBadge" class="text-[11px] px-2 py-0.5 rounded font-semibold bg-slate-800 text-slate-400">
+              Direct (Non mis en cache)
+            </span>
+          </div>
+
+          <!-- RÉSULTATS VISUELS : CONTACTS & RUBRIQUES -->
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- COLONNE 1 : CONTACTS DIRECTS EXTRAITS -->
+            <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <h4 class="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+                <span>👤 Contacts Directs Extraits</span>
+                <span id="aiCountContactsBadge" class="px-1.5 py-0.2 rounded text-[10px] bg-emerald-500/20 text-emerald-300">0</span>
+              </h4>
+              <div id="aiContactsDisplay" class="space-y-2 text-xs">
+                <!-- Badges de contacts injectés par JS -->
+              </div>
+            </div>
+
+            <!-- COLONNE 2 : RUBRIQUES STRUCTURÉES -->
+            <div class="p-4 rounded-xl bg-slate-900/90 border border-slate-800 space-y-3">
+              <h4 class="text-xs font-bold text-white flex items-center gap-1.5 uppercase tracking-wider">
+                <span>📑 Rubriques Thématiques Générées</span>
+                <span id="aiCountSectionsBadge" class="px-1.5 py-0.2 rounded text-[10px] bg-sky-500/20 text-sky-300">0</span>
+              </h4>
+              <div id="aiSectionsDisplay" class="space-y-2.5 text-xs max-h-96 overflow-y-auto custom-scrollbar pr-1">
+                <!-- Sections injectées par JS -->
+              </div>
+            </div>
+          </div>
+
+          <!-- ACCORDÉON JSON BRUT -->
+          <div class="rounded-xl border border-slate-800 bg-slate-900/60 overflow-hidden">
+            <button onclick="toggleAiJsonViewer()" class="w-full px-4 py-2.5 text-left text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-between transition-colors">
+              <span class="flex items-center gap-1.5">
+                <span>📦</span>
+                <span>Visualiser le JSON brut conforme au schéma strict</span>
+              </span>
+              <span id="aiJsonViewerIcon" class="text-slate-400">▼ Déplier</span>
+            </button>
+            <div id="aiJsonViewerContent" class="hidden p-3 border-t border-slate-800 bg-slate-950 font-mono text-[11px] text-slate-300 overflow-x-auto custom-scrollbar">
+              <pre id="aiRawJsonOutput">{}</pre>
+            </div>
+          </div>
+        </div>
+
+        <!-- ZONE DE DIALOGUE INTERACTIF / CHATBOT SUR LE BIEN SÉLECTIONNÉ -->
+        <div class="p-5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-4">
+          <div class="flex items-center justify-between pb-3 border-b border-slate-800">
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded-lg bg-emerald-500/10 text-emerald-400 flex items-center justify-center font-bold">💬</div>
+              <div>
+                <h4 class="text-sm font-bold text-white">Assistant IA & Questions / Réponses sur le Bien</h4>
+                <p class="text-[11px] text-slate-400">Interrogez l'IA en langage naturel sur le bien sélectionné</p>
+              </div>
+            </div>
+            <button onclick="clearAiChatHistory()" class="text-[11px] text-slate-400 hover:text-slate-200">Effacer la conversation</button>
+          </div>
+
+          <!-- SUGGESTIONS DE QUESTIONS EN 1 CLIC -->
+          <div class="flex flex-wrap gap-1.5 text-xs">
+            <span class="text-slate-400 text-[11px] py-1">Suggestions rapides :</span>
+            <button onclick="askAiPredefined('Qui est le contact pour visiter et quel est son numéro ?')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all text-[11px]">
+              👤 Qui contacter pour visiter ?
+            </button>
+            <button onclick="askAiPredefined('Y a-t-il des places de stationnement ou un dock mentionné ?')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all text-[11px]">
+              🚗 Y a-t-il des parkings ou docks ?
+            </button>
+            <button onclick="askAiPredefined('Quelles sont les conditions financières et de charges ?')" class="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white transition-all text-[11px]">
+              💰 Conditions financières & charges ?
+            </button>
+          </div>
+
+          <!-- HISTORIQUE DES MESSAGES -->
+          <div id="aiChatHistory" class="space-y-2.5 max-h-60 overflow-y-auto custom-scrollbar p-3 rounded-xl bg-slate-950 border border-slate-800/80 text-xs">
+            <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 flex items-start gap-2.5">
+              <span class="text-base shrink-0">🤖</span>
+              <div>
+                <p class="font-semibold text-white">Assistant Sentinel IA :</p>
+                <p class="mt-0.5 text-slate-300">Bonjour ! Je suis à votre disposition pour répondre à toutes vos questions sur l'annonce sélectionnée. Choisissez une question suggérée ou tapez la vôtre ci-dessous.</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- BARRE DE SAISIE DE QUESTION -->
+          <div class="flex items-center gap-2">
+            <input type="text" id="aiChatInput" onkeydown="if(event.key==='Enter') sendAiChatMessage()" placeholder="Posez une question sur le bien (ex: Y a-t-il une climatisation intégrale ?)..." class="flex-1 px-3.5 py-2.5 rounded-xl bg-slate-950 border border-[var(--border)] text-white text-xs focus:ring-1 focus:ring-purple-500">
+            <button onclick="sendAiChatMessage()" id="btnSendAiChat" class="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-md shadow-emerald-600/30 flex items-center gap-1.5 transition-all shrink-0">
+              <span>Envoyer</span>
+              <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- STATS & CACHE DUCKDB -->
+        <div class="p-4 rounded-xl bg-slate-900/60 border border-slate-800 flex flex-wrap items-center justify-between gap-4 text-xs">
+          <div class="flex items-center gap-3">
+            <span class="text-xl">🗄️</span>
+            <div>
+              <div class="font-bold text-white">Base de Persistance & Cache DuckDB</div>
+              <div class="text-slate-400 text-[11px]" id="aiDuckdbCacheInfo">
+                Annonces enrichies en cache : <strong class="text-purple-300" id="aiCacheCount">0</strong> / 2 683
+              </div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-2">
+            <button onclick="clearAiCacheFromUi()" class="px-3 py-1.5 rounded-xl bg-rose-950/40 hover:bg-rose-900/60 border border-rose-500/40 text-rose-300 font-semibold transition-all flex items-center gap-1 text-xs">
+              <span>🗑️ Vider le cache IA</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+    </section>
+
   </main>
 
   <!-- ===================================================================== -->
@@ -1511,6 +1877,8 @@
       document.getElementById('tabContentInvest').classList.add('hidden');
       document.getElementById('tabContentCarte').classList.add('hidden');
       document.getElementById('tabContentGuide').classList.add('hidden');
+      const tabIa = document.getElementById('tabContentIa');
+      if (tabIa) tabIa.classList.add('hidden');
 
       const content = document.getElementById('tabContent' + tabId.charAt(0).toUpperCase() + tabId.slice(1));
       if (content) content.classList.remove('hidden');
@@ -1527,6 +1895,10 @@
         setTimeout(() => {
           initLeafletMap();
         }, 100);
+      }
+
+      if (tabId === 'ia') {
+        initIaStudio();
       }
     }
 
@@ -4615,6 +4987,572 @@
     }
 
     // =========================================================================
+    // MODULE STUDIO & PARAMÉTRAGE IA SENTINEL (PLAYGROUND, PROMPT & MODÈLES)
+    // =========================================================================
+    let aiConfigCache = null;
+    let isAiAnalyzing = false;
+    let isAiChatSending = false;
+    const famousCases = {
+      pk6_manu: {
+        id: "bienmeloger.nc_508496",
+        title: "A VENDRE - LOCAL COMMERCIAL / BUREAUX 6ème KM (Rue Iekawé)",
+        commune: "Nouméa",
+        quartier: "P.k. 6",
+        price: 26000000,
+        text: "A VENDRE – LOCAL COMMERCIAL / BUREAUX 6ème KM (Rue Iekawé)\nLocal commercial aménagé, bénéficiant d'une excellente visibilité en rez-de-chaussée d'une résidence récente au 6ème km.\nIdéal pour une activité tertiaire, médicale, restauration légère ou services.\nSurface principale : 85 m²\nGrande pièce principale de 30 m²\n3 bureaux\nCafétéria équipée avec cuisine\nWC séparé\nDock / réserve de 45 m² (hauteur 3 m)\n5 places de parking dont 2 couvertes\nVolets roulants électriques\nClimatisation intégrale\nLocal libre rapidement.\nPRIX DE VENTE : 26 MF\nLocation possible à 170 000 F/mois + 12 000 F/mois de charges\nContact : Manu – 98.72.66"
+      },
+      chatelin_voile: {
+        id: "bienmeloger.nc_512211",
+        title: "Appartement F3 La Voile du Rocher - Anse Vata",
+        commune: "Nouméa",
+        quartier: "Anse Vata",
+        price: 49500000,
+        text: "Anse Vata, dans la prestigieuse résidence 'La Voile du Rocher' sécurisée avec ascenseur.\n83 m² habitables • Terrasse ~40 m² • Vue mer • 2 chambres • 2 salles d'eau • Grand dressing • 2 stationnements couverts • Cellier privatif.\nServices de la résidence : Salle de fitness • 2 restaurants • Coiffeurs • Boutiques de mode • Vidéosurveillance.\nContactez Laurent NGUYEN au 289.888 ou accueil@chatelin.nc"
+      },
+      ducos_dock: {
+        id: "custom_dock_ducos",
+        title: "Grand Dock Industriel & Bureaux - Ducos ZI",
+        commune: "Nouméa",
+        quartier: "Ducos",
+        price: 85000000,
+        text: "À VENDRE à Ducos ZI, emplacement logistique stratégique.\nEntrepôt de 450 m² avec hauteur sous faîtage de 6,5 m, porte sectionnelle motorisée, compteur triphasé 36 kVA.\nMezzanine aménagée en 4 bureaux climatisés (80 m²).\nTerrain clôturé de 12 ares avec aire de manœuvre pour semi-remorque et 10 parkings.\nVisites et renseignements : Sophie au 79.40.01 ou agence@ducos-immo.nc"
+      },
+      villa_tina: {
+        id: "custom_villa_tina",
+        title: "Villa d'architecte F5 vue lagon - Baie des Citrons / Tina",
+        commune: "Nouméa",
+        quartier: "Baie des Citrons",
+        price: 98000000,
+        text: "Coup de cœur pour cette villa d'architecte de 180 m² habitables sur 10 ares arborés.\nGrand séjour cathédrale, cuisine américaine haut de gamme en kohu, varangue de 45 m² avec vue panoramique lagon.\n4 chambres climatisées dont suite parentale avec dressing, 3 salles de bains, piscine à débordement au sel.\nDouble garage fermé et cellier.\nContact exclusif : Jean-Marc – 85.46.55"
+      }
+    };
+
+    async function checkAiStatusInBackground() {
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/status`);
+        if (resp.ok) {
+          const data = await resp.json();
+          updateAiStatusUI(data);
+        }
+      } catch (e) {
+        updateAiStatusUI({ status: 'offline', message: 'Mode Déterministe Tier-1 Actif' });
+      }
+    }
+
+    function updateAiStatusUI(statusData) {
+      const isOnline = statusData && statusData.status === 'online';
+      const badge = document.getElementById('aiEngineStatusBadge');
+      const pulse = document.getElementById('aiEngineStatusPulse');
+      const text = document.getElementById('aiEngineStatusText');
+      const navDot = document.getElementById('aiNavStatusDot');
+
+      if (navDot) {
+        navDot.className = `inline-block w-2 h-2 rounded-full ${isOnline ? 'bg-emerald-400 animate-ping' : 'bg-slate-400'}`;
+      }
+
+      if (badge && pulse && text) {
+        if (isOnline) {
+          badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-950/60 text-emerald-300 border border-emerald-500/40 flex items-center gap-1.5';
+          pulse.className = 'w-2 h-2 rounded-full bg-emerald-400 animate-pulse';
+          text.textContent = `🟢 Ollama Connecté (${statusData.ping_ms || 12} ms)`;
+        } else {
+          badge.className = 'px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5';
+          pulse.className = 'w-2 h-2 rounded-full bg-slate-400';
+          text.textContent = `⚪ Tier-1 Déterministe (Ollama Hors-Ligne)`;
+        }
+      }
+
+      if (statusData && statusData.hardware) {
+        const gpuEl = document.getElementById('aiHardwareGpu');
+        const vramEl = document.getElementById('aiHardwareVram');
+        if (gpuEl) gpuEl.textContent = statusData.hardware.gpu || 'NVIDIA GTX 1060 6 Go GDDR5';
+        if (vramEl) vramEl.textContent = `VRAM Utile : ${statusData.hardware.vram_usable_gb} Go • ${statusData.hardware.cpu} • ${statusData.hardware.ram_gb} Go RAM`;
+      }
+
+      if (statusData && statusData.cache) {
+        const cEl = document.getElementById('aiCacheCount');
+        if (cEl) cEl.textContent = statusData.cache.cached_count || 0;
+      }
+    }
+
+    async function initIaStudio() {
+      populateAiListingsSelector();
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/config`);
+        if (resp.ok) {
+          aiConfigCache = await resp.json();
+          applyAiConfigToUI(aiConfigCache);
+        }
+      } catch (e) {
+        console.warn('Erreur config IA:', e);
+      }
+      await pingAiEngine();
+      const curText = document.getElementById('aiInputRawText');
+      if (curText && !curText.value.trim()) {
+        loadFamousCase('pk6_manu');
+      }
+    }
+
+    function populateAiListingsSelector() {
+      const sel = document.getElementById('aiListingSelect');
+      if (!sel || sel.options.length > 5) return;
+
+      const totalCount = listingsData ? listingsData.length : 0;
+      const countEl = document.getElementById('aiTotalListingsCount');
+      if (countEl) countEl.textContent = totalCount || '2 683';
+
+      let html = '<option value="">-- Sélectionnez une annonce réelle --</option>';
+      if (listingsData && listingsData.length > 0) {
+        listingsData.slice(0, 300).forEach(l => {
+          const priceStr = l.currentPrice ? (l.currentPrice / 1e6 >= 1 ? `${(l.currentPrice / 1e6).toFixed(1)} MF` : `${l.currentPrice} F`) : '';
+          const cleanTitle = (l.title || 'Annonce').replace(/[<>&"]/g, '');
+          html += `<option value="${l.id}">${cleanTitle.substring(0, 45)} (${l.commune || 'NC'} - ${priceStr})</option>`;
+        });
+      }
+      sel.innerHTML = html;
+    }
+
+    function applyAiConfigToUI(cfg) {
+      if (!cfg) return;
+      const prov = document.getElementById('aiProviderSelect');
+      if (prov && cfg.provider) prov.value = cfg.provider;
+
+      const mod = document.getElementById('aiModelSelect');
+      if (mod && cfg.model) mod.value = cfg.model;
+
+      const temp = document.getElementById('aiTempSlider');
+      const tempLbl = document.getElementById('aiTempLabel');
+      if (temp && cfg.temperature !== undefined) {
+        temp.value = cfg.temperature;
+        if (tempLbl) tempLbl.textContent = cfg.temperature;
+      }
+
+      const promptArea = document.getElementById('aiSystemPromptTextarea');
+      if (promptArea && cfg.system_prompt) {
+        promptArea.value = cfg.system_prompt;
+        updatePromptTokenCount();
+      }
+    }
+
+    async function pingAiEngine() {
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/status`);
+        if (resp.ok) {
+          const data = await resp.json();
+          updateAiStatusUI(data);
+          showNotificationToast('Moteur Sentinel IA', data.message, data.status === 'online' ? 'success' : 'info');
+        }
+      } catch (e) {
+        updateAiStatusUI({ status: 'offline', message: 'Ollama hors ligne. Tier-1 déterministe prêt.' });
+        showNotificationToast('Moteur Sentinel IA', 'Ollama hors ligne. Le mode déterministe Tier-1 assure le service.', 'info');
+      }
+    }
+
+    function onAiProviderChange() {
+      const p = document.getElementById('aiProviderSelect').value;
+      const box = document.getElementById('aiConnectionInfoText');
+      if (p === 'deterministic') {
+        if (box) box.textContent = "⚡ Mode Déterministe Tier-1 : Inférence instantanée (0 ms), sans sollicitation GPU. Idéal pour les imports de masse.";
+      } else if (p === 'gemini_cloud') {
+        if (box) box.textContent = "☁️ Google Gemini API Cloud : Inférence sub-seconde via clé d'API. Parfaite compréhension du vocabulaire calédonien.";
+      } else {
+        if (box) box.textContent = "🖥️ Ollama Local : Inférence 100% privée sur votre NVIDIA GTX 1060 6 Go. Zéro fuite de données vers l'extérieur.";
+      }
+    }
+
+    function onAiModelChange() {
+      const m = document.getElementById('aiModelSelect').value;
+      showNotificationToast('Modèle LLM', `Modèle sélectionné : ${m}`, 'info', 3000);
+    }
+
+    function onAiTempChange(val) {
+      const lbl = document.getElementById('aiTempLabel');
+      if (lbl) lbl.textContent = val;
+    }
+
+    function updatePromptTokenCount() {
+      const txt = document.getElementById('aiSystemPromptTextarea');
+      const badge = document.getElementById('promptTokenCountBadge');
+      if (txt && badge) {
+        const words = txt.value.trim().split(/\s+/).length;
+        const tokens = Math.round(words * 1.35);
+        badge.textContent = `~${tokens} tokens`;
+      }
+    }
+
+    function applyPromptPreset(presetKey) {
+      if (!aiConfigCache || !aiConfigCache.presets) return;
+      const preset = aiConfigCache.presets[presetKey];
+      if (!preset) return;
+
+      const area = document.getElementById('aiSystemPromptTextarea');
+      if (area) {
+        area.value = preset.prompt;
+        updatePromptTokenCount();
+      }
+
+      if (preset.temperature !== undefined) {
+        const slider = document.getElementById('aiTempSlider');
+        const lbl = document.getElementById('aiTempLabel');
+        if (slider) slider.value = preset.temperature;
+        if (lbl) lbl.textContent = preset.temperature;
+      }
+
+      document.querySelectorAll('#aiPromptPresetButtons button').forEach(b => {
+        b.className = 'px-2.5 py-1 rounded-lg text-xs font-medium bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-all';
+      });
+      if (event && event.target) {
+        event.target.className = 'px-2.5 py-1 rounded-lg text-xs font-medium bg-purple-600 text-white border border-purple-400 transition-all';
+      }
+
+      showNotificationToast('Preset appliqué', `Configuration : ${preset.name}`, 'info', 3000);
+    }
+
+    async function saveCurrentPrompt() {
+      const prompt = document.getElementById('aiSystemPromptTextarea').value;
+      const model = document.getElementById('aiModelSelect').value;
+      const provider = document.getElementById('aiProviderSelect').value;
+      const temp = parseFloat(document.getElementById('aiTempSlider').value);
+
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/config`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            system_prompt: prompt,
+            model: model,
+            provider: provider,
+            temperature: temp
+          })
+        });
+        if (resp.ok) {
+          const res = await resp.json();
+          aiConfigCache = res.config;
+          showNotificationToast('Sauvegarde réussie', 'Le System Prompt et les paramètres ont été enregistrés avec succès !', 'success');
+        }
+      } catch (e) {
+        showNotificationToast('Erreur', 'Impossible de sauvegarder les paramètres IA : ' + e, 'error');
+      }
+    }
+
+    function resetDefaultPrompt() {
+      applyPromptPreset('standard');
+    }
+
+    function clearAiInputText() {
+      const txt = document.getElementById('aiInputRawText');
+      if (txt) txt.value = '';
+    }
+
+    function loadFamousCase(caseKey) {
+      const c = famousCases[caseKey];
+      if (!c) return;
+
+      const txt = document.getElementById('aiInputRawText');
+      if (txt) txt.value = c.text;
+
+      const tEl = document.getElementById('aiMetaTitle');
+      const locEl = document.getElementById('aiMetaLoc');
+      const pEl = document.getElementById('aiMetaPrice');
+      if (tEl) tEl.textContent = c.title;
+      if (locEl) locEl.textContent = `Localisation : ${c.quartier}, ${c.commune}`;
+      if (pEl) pEl.textContent = `Prix : ${(c.price || 0).toLocaleString('fr-FR')} F CFP`;
+
+      const sel = document.getElementById('aiListingSelect');
+      if (sel) sel.value = '';
+
+      runAiExtractionTest();
+    }
+
+    function onAiListingSelected() {
+      const sel = document.getElementById('aiListingSelect');
+      if (!sel || !sel.value) return;
+      const item = listingsData.find(l => l.id === sel.value);
+      if (!item) return;
+
+      const txt = document.getElementById('aiInputRawText');
+      if (txt) txt.value = item.description || item.title || '';
+
+      const tEl = document.getElementById('aiMetaTitle');
+      const locEl = document.getElementById('aiMetaLoc');
+      const pEl = document.getElementById('aiMetaPrice');
+      if (tEl) tEl.textContent = item.title;
+      if (locEl) locEl.textContent = `Localisation : ${item.quartier || ''}, ${item.commune || 'NC'}`;
+      if (pEl) pEl.textContent = `Prix : ${formatPriceXPF(item.currentPrice)}`;
+
+      runAiExtractionTest();
+    }
+
+    async function runAiExtractionTest() {
+      const rawText = document.getElementById('aiInputRawText').value.trim();
+      if (!rawText) {
+        showNotificationToast('Attention', "Veuillez coller un texte d'annonce ou sélectionner un cas d'étude.", 'error');
+        return;
+      }
+
+      const btn = document.getElementById('btnRunAiTest');
+      const btnIcon = document.getElementById('btnRunAiTestIcon');
+      const btnText = document.getElementById('btnRunAiTestText');
+      if (btn) btn.disabled = true;
+      if (btnIcon) btnIcon.textContent = '⏳';
+      if (btnText) btnText.textContent = "Extraction en cours...";
+
+      const prompt = document.getElementById('aiSystemPromptTextarea').value;
+      const model = document.getElementById('aiModelSelect').value;
+
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/enrich`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: rawText,
+            prompt: prompt,
+            model: model,
+            force_refresh: true
+          })
+        });
+
+        if (resp.ok) {
+          const res = await resp.json();
+          renderAiResults(res.data);
+          showNotificationToast('Extraction terminée', `Analyse complétée en ${res.data.latency_ms} ms via ${res.data.provider_used}`, 'success');
+        } else {
+          showNotificationToast('Erreur', "Échec de l'enrichissement sémantique.", 'error');
+        }
+      } catch (e) {
+        showNotificationToast('Erreur', "Impossible de contacter l'API Sentinel : " + e, 'error');
+      } finally {
+        if (btn) btn.disabled = false;
+        if (btnIcon) btnIcon.textContent = '⚡';
+        if (btnText) btnText.textContent = "Lancer l'Analyse & Structuration IA";
+      }
+    }
+
+    function renderAiResults(data) {
+      const container = document.getElementById('aiResultsContainer');
+      if (!container) return;
+      container.classList.remove('hidden');
+
+      const engEl = document.getElementById('aiMetricEngine');
+      const latEl = document.getElementById('aiMetricLatency');
+      const tokEl = document.getElementById('aiMetricToks');
+      const cacheBadge = document.getElementById('aiMetricCachedBadge');
+
+      if (engEl) engEl.textContent = data.provider_used || 'Tier-1 Déterministe';
+      if (latEl) latEl.textContent = `${data.latency_ms || 0} ms`;
+      if (tokEl) tokEl.textContent = `${data.tokens_per_second || 0} tok/s`;
+      if (cacheBadge) {
+        cacheBadge.textContent = data.cached ? "⚡ Extrait du Cache DuckDB (0 ms)" : "Direct (Calculé à la volée)";
+        cacheBadge.className = `text-[11px] px-2 py-0.5 rounded font-semibold ${data.cached ? 'bg-purple-900/60 text-purple-300 border border-purple-500/30' : 'bg-slate-800 text-slate-400'}`;
+      }
+
+      const contactsDisplay = document.getElementById('aiContactsDisplay');
+      const contactsBadge = document.getElementById('aiCountContactsBadge');
+      const contacts = data.direct_contacts || [];
+      if (contactsBadge) contactsBadge.textContent = contacts.length;
+
+      if (contactsDisplay) {
+        if (contacts.length === 0) {
+          contactsDisplay.innerHTML = `
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 text-center italic">
+              Aucun contact direct de négociateur détecté dans cette annonce.
+            </div>
+          `;
+        } else {
+          contactsDisplay.innerHTML = contacts.map(c => `
+            <div class="p-3 rounded-xl bg-slate-950 border border-emerald-500/30 flex items-center justify-between gap-3 shadow-md">
+              <div>
+                <div class="font-bold text-white flex items-center gap-2">
+                  <span>👤 ${c.name || 'Négociateur'}</span>
+                  <span class="px-2 py-0.5 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">Direct</span>
+                </div>
+                <div class="text-xs text-slate-300 font-mono mt-0.5">${c.phone || 'Non spécifié'}</div>
+                ${c.email ? `<div class="text-[11px] text-slate-400 font-mono">${c.email}</div>` : ''}
+              </div>
+              <div class="flex items-center gap-1.5 shrink-0">
+                ${c.phone ? `
+                  <a href="tel:${c.phone}" class="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs flex items-center gap-1 transition-all">
+                    <span>📞 Appeler</span>
+                  </a>
+                ` : ''}
+                ${c.whatsapp ? `
+                  <a href="https://wa.me/${c.whatsapp}" target="_blank" rel="noopener" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs flex items-center gap-1 transition-all">
+                    <span>💬 WhatsApp</span>
+                  </a>
+                ` : ''}
+              </div>
+            </div>
+          `).join('');
+        }
+      }
+
+      const sectionsDisplay = document.getElementById('aiSectionsDisplay');
+      const sectionsBadge = document.getElementById('aiCountSectionsBadge');
+      const sections = data.sections || [];
+      if (sectionsBadge) sectionsBadge.textContent = sections.length;
+
+      if (sectionsDisplay) {
+        if (sections.length === 0) {
+          sectionsDisplay.innerHTML = `
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800 text-slate-400 text-center italic">
+              Aucune rubrique thématique spécifique générée.
+            </div>
+          `;
+        } else {
+          sectionsDisplay.innerHTML = sections.map(s => `
+            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-1.5">
+              <div class="font-bold text-white text-xs flex items-center gap-2 text-sky-300">
+                <span>${s.icon || '📌'}</span>
+                <span>${s.title}</span>
+                <span class="text-[10px] text-slate-400 font-normal">(${(s.items || []).length} puces)</span>
+              </div>
+              <ul class="space-y-1 text-slate-300 text-[11px] pl-5 list-disc marker:text-sky-400">
+                ${(s.items || []).map(it => `<li>${it}</li>`).join('')}
+              </ul>
+            </div>
+          `).join('');
+        }
+      }
+
+      const rawJson = document.getElementById('aiRawJsonOutput');
+      if (rawJson) {
+        rawJson.textContent = JSON.stringify(data.raw_response || data, null, 2);
+      }
+
+      const cCount = document.getElementById('aiCacheCount');
+      if (cCount) {
+        const cur = parseInt(cCount.textContent) || 0;
+        cCount.textContent = cur + 1;
+      }
+    }
+
+    function toggleAiJsonViewer() {
+      const content = document.getElementById('aiJsonViewerContent');
+      const icon = document.getElementById('aiJsonViewerIcon');
+      if (!content || !icon) return;
+      if (content.classList.contains('hidden')) {
+        content.classList.remove('hidden');
+        icon.textContent = '▲ Replier';
+      } else {
+        content.classList.add('hidden');
+        icon.textContent = '▼ Déplier';
+      }
+    }
+
+    function askAiPredefined(q) {
+      const input = document.getElementById('aiChatInput');
+      if (input) input.value = q;
+      sendAiChatMessage();
+    }
+
+    async function sendAiChatMessage() {
+      const input = document.getElementById('aiChatInput');
+      if (!input) return;
+      const q = input.value.trim();
+      if (!q) return;
+
+      const rawText = document.getElementById('aiInputRawText').value.trim();
+      const model = document.getElementById('aiModelSelect').value;
+      const history = document.getElementById('aiChatHistory');
+
+      if (history) {
+        history.innerHTML += `
+          <div class="p-3 rounded-xl bg-purple-950/40 border border-purple-500/30 text-slate-200 flex items-start gap-2.5">
+            <span class="text-base shrink-0">👤</span>
+            <div>
+              <p class="font-bold text-purple-300">Vous :</p>
+              <p class="mt-0.5 text-white">${q}</p>
+            </div>
+          </div>
+        `;
+        history.scrollTop = history.scrollHeight;
+      }
+
+      input.value = '';
+      const btn = document.getElementById('btnSendAiChat');
+      if (btn) btn.disabled = true;
+
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            text: rawText,
+            question: q,
+            model: model
+          })
+        });
+
+        if (resp.ok) {
+          const res = await resp.json();
+          const ans = res.data ? res.data.answer : "Aucune réponse fournie.";
+          const src = res.data ? res.data.source : "Moteur IA";
+          if (history) {
+            history.innerHTML += `
+              <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 flex items-start gap-2.5">
+                <span class="text-base shrink-0">🤖</span>
+                <div>
+                  <div class="flex items-center gap-2">
+                    <p class="font-bold text-white">Assistant Sentinel :</p>
+                    <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">${src}</span>
+                  </div>
+                  <p class="mt-1 text-slate-200 leading-relaxed">${ans}</p>
+                </div>
+              </div>
+            `;
+            history.scrollTop = history.scrollHeight;
+          }
+        }
+      } catch (e) {
+        if (history) {
+          history.innerHTML += `
+            <div class="p-3 rounded-xl bg-rose-950/40 border border-rose-500/30 text-rose-300 text-xs">
+              Erreur lors de la réponse de l'assistant : ${e}
+            </div>
+          `;
+        }
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    }
+
+    function clearAiChatHistory() {
+      const history = document.getElementById('aiChatHistory');
+      if (history) {
+        history.innerHTML = `
+          <div class="p-3 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 flex items-start gap-2.5">
+            <span class="text-base shrink-0">🤖</span>
+            <div>
+              <p class="font-semibold text-white">Assistant Sentinel IA :</p>
+              <p class="mt-0.5 text-slate-300">Conversation réinitialisée. Posez une question sur le bien sélectionné.</p>
+            </div>
+          </div>
+        `;
+      }
+    }
+
+    async function clearAiCacheFromUi() {
+      if (!confirm("Voulez-vous vraiment vider le cache DuckDB des enrichissements sémantiques ?")) return;
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/cache/clear`, { method: 'POST' });
+        if (resp.ok) {
+          const cCount = document.getElementById('aiCacheCount');
+          if (cCount) cCount.textContent = '0';
+          showNotificationToast('Cache DuckDB', 'Le cache IA a été vidé avec succès !', 'success');
+        }
+      } catch (e) {
+        showNotificationToast('Erreur', 'Impossible de vider le cache : ' + e, 'error');
+      }
+    }
+
+    // =========================================================================
     // INITIALISATION AU CHARGEMENT
     // =========================================================================
     window.addEventListener('DOMContentLoaded', () => {
@@ -4625,6 +5563,7 @@
       recalculateAVM();
       recalculateSimulation();
       loadLiveBackendData();
+      checkAiStatusInBackground();
     });
   </script>
 </body>
