@@ -727,6 +727,27 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     else:
                         photo_badge = f"📷 Prise le {photo_date_str}"
 
+                # Résolution dynamique des coordonnées réelles d'agence
+                agency_meta = struct_desc.get("agency_metadata", {})
+                real_agency_phone = agency_meta.get("phone")
+                real_agency_email = agency_meta.get("email")
+                real_agency_hours = agency_meta.get("hours", [])
+                real_agency_legal = agency_meta.get("legal", [])
+
+                row_agency_phone = safe_str(row.get("agency_phone"))
+                final_agency_phone = real_agency_phone or (f"+687 {row_agency_phone}" if row_agency_phone and not row_agency_phone.startswith("+") else row_agency_phone)
+
+                if not final_agency_phone:
+                    for ag in NC_AGENCIES:
+                        if ag.get("name") and ag["name"].lower() in str(row.get("agency_name") or "").lower():
+                            if ag.get("phone"):
+                                final_agency_phone = ag["phone"]
+                                break
+
+                final_agency_phone = final_agency_phone or "+687 28.10.20"
+                phone_digits = re.sub(r'\D', '', final_agency_phone)
+                final_whatsapp = f"687{phone_digits[-6:]}" if len(phone_digits) >= 6 and phone_digits[-6] in ('7', '8', '9') else None
+
                 listings.append({
                     "id": str(row.get("id")),
                     "title": str(row.get("title")),
@@ -776,8 +797,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "source": str(row.get("source")),
                     "sourceUrl": str(row.get("url")),
                     "agencyName": str(row.get("agency_name") or "Professionnel Immo NC"),
-                    "agencyPhone": "+687 28.10.20",
-                    "whatsapp": "687281020",
+                    "agencyPhone": final_agency_phone,
+                    "agencyEmail": real_agency_email,
+                    "agencyHours": real_agency_hours,
+                    "agencyLegal": real_agency_legal,
+                    "whatsapp": final_whatsapp or "687281020",
                     "image": img_url,
                     "images": images,
                     "description": desc,

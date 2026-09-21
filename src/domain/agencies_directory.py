@@ -519,6 +519,17 @@ NC_AGENCIES: List[Dict[str, Any]] = [
         "badge_color": "yellow",
     },
     {
+        "id": "chatelin",
+        "name": "Chatelin Immobilier",
+        "aliases": ["chatelin immobilier", "chatelin", "chatelin.nc", "cabinet chatelin"],
+        "website": "https://www.chatelin.nc",
+        "city": "Nouméa",
+        "phone": "+687 289.888",
+        "domains": ["chatelin.nc", "chatelin-immobilier.nc"],
+        "logo_text": "CHATELIN",
+        "badge_color": "cyan",
+    },
+    {
         "id": "particulier",
         "name": "Particuliers & Mandataires NC",
         "aliases": ["particulier", "particulier nc", "propriétaire"],
