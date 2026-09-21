@@ -308,7 +308,7 @@ def enrich_listing_with_ai(
     cfg = get_ai_config()
     model = custom_model or cfg.get("model", "qwen2.5:3b")
     system_prompt = custom_prompt or cfg.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-    timeout_sec = float(cfg.get("timeout_seconds", 15.0))
+    timeout_sec = float(cfg.get("timeout_seconds", 30.0))
 
     # Extraction des métadonnées d'entrée
     if isinstance(listing_data, dict):
@@ -507,7 +507,7 @@ def ask_ai_chat(listing_data: Any, question: str, custom_model: Optional[str] = 
             headers={"Content-Type": "application/json", "User-Agent": "Sentinel-ImmoNC/1.0"}
         )
 
-        with urllib.request.urlopen(req, timeout=8.0) as resp:
+        with urllib.request.urlopen(req, timeout=25.0) as resp:
             if resp.status == 200:
                 body = json.loads(resp.read().decode("utf-8"))
                 latency_ms = int((time.time() - t0) * 1000)
