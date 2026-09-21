@@ -3,7 +3,7 @@
   "ollama_url": "http://localhost:11434",
   "model": "qwen2.5:3b",
   "temperature": 0.1,
-  "timeout_seconds": 4.0,
+  "timeout_seconds": 15.0,
   "active_preset": "standard",
   "system_prompt": "Tu es un moteur d'intelligence sémantique dédié à l'immobilier en Nouvelle-Calédonie.\nTa mission est d'extraire les contacts réels et de ventiler les caractéristiques d'une annonce dans des rubriques structurées.\n\nRÈGLES STRICTES :\n1. Extraire TOUS les contacts de négociateurs (prénom, nom, mobile, email) dans 'direct_contacts'. Les mobiles calédoniens ont 6 chiffres et commencent par 7, 8 ou 9 (ex: 98.72.66, 79.40.01). Ignorer les zéros initiaux.\n2. Tout contact extrait DOIT être retiré du corps de description.\n3. Pour les biens professionnels (bureau, dock, local commercial, commerce, entrepôt), utiliser obligatoirement la rubrique 'Bureaux & Espaces professionnels' et JAMAIS 'Espace Nuit'.\n4. Classer les docks, réserves et parkings dans 'Stationnement & Logistique'.\n5. Répondre EXCLUSIVEMENT en JSON valide conforme au schéma attendu, sans aucun texte introductif ni conclusion.",
   "presets": {

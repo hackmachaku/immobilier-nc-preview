@@ -32,10 +32,11 @@ HARDWARE_SPECS = {
     "gpu": "NVIDIA GeForce GTX 1060 6 Go GDDR5",
     "vram_total_gb": 6.0,
     "vram_usable_gb": 4.9,
-    "vram_status": "Optimal pour modèles ≤ 3B (Qwen 2.5 3B, Gemma 2 2B)",
+    "vram_status": "Profil MSI GS65 Stealth : CPU AVX2 Eco-Thermique (4 threads) pour stabilité totale",
     "cpu": "Intel Core i7-8750H (6C/12T @ 2.20 GHz)",
     "ram_gb": 16,
-    "os": "Windows 11 Professionnel 64-bit"
+    "os": "Windows 11 Professionnel 64-bit",
+    "mode": "CPU AVX2 Eco (4 threads dédiés, 0 surchauffe)"
 }
 
 DEFAULT_SYSTEM_PROMPT = (
@@ -179,6 +180,21 @@ def init_ai_cache_table():
             latency_ms INTEGER
         );
         """)
+        cols = [c[1] for c in con.execute("PRAGMA table_info('listing_ai_enrichment');").fetchall()]
+        if "enriched_at" not in cols:
+            con.execute("DROP TABLE listing_ai_enrichment;")
+            con.execute("""
+            CREATE TABLE listing_ai_enrichment (
+                listing_id VARCHAR PRIMARY KEY,
+                model_version VARCHAR,
+                enriched_at TIMESTAMP,
+                input_hash VARCHAR,
+                extracted_contacts_json VARCHAR,
+                structured_sections_json VARCHAR,
+                raw_response_json VARCHAR,
+                latency_ms INTEGER
+            );
+            """)
         con.close()
     except Exception as e:
         logger.warning(f"Erreur init_ai_cache_table : {e}")
@@ -190,8 +206,8 @@ def get_ai_cache_stats() -> Dict[str, Any]:
         import duckdb
         if not DB_PATH.exists():
             return {"cached_count": 0, "status": "no_db"}
+        init_ai_cache_table()
         con = duckdb.connect(str(DB_PATH), read_only=True)
-        # Vérifier si la table existe
         tables = con.execute("SHOW TABLES").fetchall()
         table_names = [t[0] for t in tables]
         if "listing_ai_enrichment" not in table_names:
@@ -214,8 +230,8 @@ def clear_ai_cache() -> bool:
         import duckdb
         if not DB_PATH.exists():
             return True
+        init_ai_cache_table()
         con = duckdb.connect(str(DB_PATH))
-        con.execute("CREATE TABLE IF NOT EXISTS listing_ai_enrichment (listing_id VARCHAR PRIMARY KEY);")
         con.execute("DELETE FROM listing_ai_enrichment;")
         con.close()
         return True
@@ -292,7 +308,7 @@ def enrich_listing_with_ai(
     cfg = get_ai_config()
     model = custom_model or cfg.get("model", "qwen2.5:3b")
     system_prompt = custom_prompt or cfg.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-    timeout_sec = float(cfg.get("timeout_seconds", 4.0))
+    timeout_sec = float(cfg.get("timeout_seconds", 15.0))
 
     # Extraction des métadonnées d'entrée
     if isinstance(listing_data, dict):
@@ -363,7 +379,8 @@ def enrich_listing_with_ai(
             "stream": False,
             "options": {
                 "temperature": float(cfg.get("temperature", 0.1)),
-                "num_ctx": 2048
+                "num_ctx": 2048,
+                "num_thread": 4
             },
             "keep_alive": "5m"
         }).encode("utf-8")
@@ -480,7 +497,7 @@ def ask_ai_chat(listing_data: Any, question: str, custom_model: Optional[str] = 
             "prompt": full_prompt,
             "system": system_prompt,
             "stream": False,
-            "options": {"temperature": 0.2, "num_ctx": 2048},
+            "options": {"temperature": 0.2, "num_ctx": 2048, "num_thread": 4},
             "keep_alive": "5m"
         }).encode("utf-8")
 
