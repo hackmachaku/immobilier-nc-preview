@@ -240,3 +240,43 @@ CP N 2013 165T et 165G - Garantie Bancaire: BCI"""
     assert "Laurent NGUYEN" not in all_body_str
     assert "8h-12h" not in all_body_str
     assert "CP N 2013" not in all_body_str
+
+
+def test_voip_and_triplet_phone_formats():
+    """Test des numéros VoIP / spéciaux NC commençant par 5 (ex: 505.510)."""
+    text = "Superbe appartement à louer. Visiter avec Antoine au 505.510."
+    res = structure_description(text)
+    assert len(res["direct_contacts"]) >= 1
+    c = res["direct_contacts"][0]
+    assert c["name"] == "Antoine"
+    assert "505.510" in c["phone"] or "505510" in c["raw_phone"]
+
+
+def test_scraped_single_line_immonc_format():
+    """Test des annonces scrappées monolignes avec . Contact: (ex: flux Immo.nc / Immocal)."""
+    text = "Annonce Appartement F3 à Anse Vata Nouméa. Contact: AGENCE SOLEIL (Tél: 43.97.67, Email: contact@soleil.nc)."
+    res = structure_description(text)
+    assert res["has_structured"] is True
+    # Le titre/type doit être dans une section descriptive (cadre_vie)
+    sec_cadre = next((s for s in res["sections"] if s["key"] == "cadre_vie"), None)
+    assert sec_cadre is not None
+    assert any("Anse Vata" in it for it in sec_cadre["items"])
+    # Les contacts doivent être proprement extraits
+    assert res["agency_metadata"]["email"] == "contact@soleil.nc"
+    assert "43.97.67" in (res["agency_metadata"]["phone"] or "")
+
+
+def test_inline_dash_separated_contact():
+    """Test des annonces compactes avec contact séparé par un tiret."""
+    text = "PàP loue F4 duplex de charme VDC, 100 m² terrasse, 3 chambres + 1 dressing, 2 parking sécurisés, vue mer, 135k/mois - aude@yahoo.fr - Tel : 822692"
+    res = structure_description(text)
+    assert res["has_structured"] is True
+    assert res["agency_metadata"]["email"] == "aude@yahoo.fr"
+    # Vérifier que les pièces sont bien catégorisées
+    sec_nuit = next((s for s in res["sections"] if s["key"] == "espace_nuit"), None)
+    assert sec_nuit is not None
+    assert any("chambre" in it.lower() for it in sec_nuit["items"])
+    # Le contact ne doit pas figurer dans le corps
+    all_items_str = " ".join(" ".join(s["items"]) for s in res["sections"])
+    assert "aude@yahoo.fr" not in all_items_str
+

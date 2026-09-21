@@ -35,7 +35,7 @@ BOILERPLATE_PATTERNS = [
 FOOTER_TRIGGER_REGEX = re.compile(
     r'(?:contactez-nous|pour\s+(?:en\s+savoir\s+plus|planifier|visiter|tout(?:e?s?)?\s+renseignement|visite)|'
     r'visites?\s+(?:et\s+n[ée]gociations?|avec)|prenez\s+rendez-vous|vos?\s+conseillers?|'
-    r'renseignements?\s+aupr[èe]s\s+de|retrouvez\s+toutes\s+nos\s+offres|annonce\s+\w+.*contact\s*:)',
+    r'renseignements?\s+aupr[èe]s\s+de|retrouvez\s+toutes\s+nos\s+offres|^\s*contact\s*:)',
     re.IGNORECASE
 )
 
@@ -176,16 +176,16 @@ def normalize_nc_phone(raw_phone: str) -> Optional[Dict[str, Any]]:
         return None
 
     first_digit = digits[0]
-    # Les numéros NC valides commencent par 2, 3, 4, 7, 8, 9 ou 05
-    if first_digit not in ('2', '3', '4', '7', '8', '9') and not digits.startswith('05'):
+    # Les numéros NC valides commencent par 2, 3, 4, 5, 7, 8, 9 ou 05
+    if first_digit not in ('2', '3', '4', '5', '7', '8', '9') and not digits.startswith('05'):
         return None
 
     is_mobile = first_digit in ('7', '8', '9')
     whatsapp_num = f"687{digits}" if is_mobile else None
 
-    # Conservation du formatage triplet si présent à l'origine (ex: 289.888 ou 289 888)
+    # Conservation du formatage triplet si présent à l'origine (ex: 289.888 ou 505.510)
     clean_raw = raw_phone.strip()
-    if re.match(r'^\+?(?:687)?\s*2\d{2}[\s.]\d{3}$', clean_raw) or len(digits) == 6 and ('.' in clean_raw and len(clean_raw.split('.')[0][-3:]) == 3):
+    if re.match(r'^\+?(?:687)?\s*[25]\d{2}[\s.]\d{3}$', clean_raw) or len(digits) == 6 and ('.' in clean_raw and len(clean_raw.split('.')[0][-3:]) == 3):
         formatted = f"+687 {digits[:3]}.{digits[3:]}"
     else:
         formatted = f"+687 {digits[:2]}.{digits[2:4]}.{digits[4:6]}"
@@ -217,6 +217,90 @@ def split_compound_line(line: str) -> List[str]:
     return [line]
 
 
+def is_likely_person_name(line: str) -> bool:
+    """
+    Détermine si une ligne isolée dans un footer est un nom de négociateur (ex: "Laurent NGUYEN").
+    Empêche de confondre un titre ou un descriptif de bien court avec un nom.
+    """
+    clean = line.strip()
+    if len(clean) > 35 or len(clean) < 3:
+        return False
+    if any(w in clean.lower() for w in [
+        'annonce', 'appartement', 'maison', 'villa', 'terrain', 'dock', 'bureau',
+        'local', 'immeuble', 'f1', 'f2', 'f3', 'f4', 'f5', 'étage', 'nouméa',
+        'dumbéa', 'païta', 'mont-dore', 'chambre', 'séjour', 'cuisine', 'terrasse', 'prix'
+    ]):
+        return False
+    # Vérification 1 : Intitulé explicite
+    if re.search(r'(?:contact|conseill|n[ée]gociat|agent)\s*:', clean, re.IGNORECASE):
+        return True
+    # Vérification 2 : Deux ou trois mots avec majuscules
+    words = clean.split()
+    if 2 <= len(words) <= 3:
+        return all(w[0].isupper() for w in words if w) and clean.lower() not in STOP_NAMES
+    return False
+
+
+def pre_segment_raw_lines(raw_text: str) -> List[str]:
+    """
+    Découpe et normalise le texte brut en lignes exploitables :
+    - Décompose les sauts de lignes HTML (<br>, <p>).
+    - Isole les annonces monolignes compactes (ex: "Annonce F3... Contact : Agence Soleil...").
+    - Isole les contacts en queue de texte précédés d'un tiret ou d'une phrase d'appel.
+    """
+    if not raw_text:
+        return []
+
+    clean_breaks = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
+    clean_breaks = re.sub(r'</?p>', '\n', clean_breaks, flags=re.IGNORECASE)
+    lines = [l.strip() for l in clean_breaks.split('\n') if l.strip()]
+
+    expanded = []
+    for l in lines:
+        # Pre-split "Annonce Appartement... Contact: ..." (typique des flux scrapés)
+        m = re.search(r'^(.*?)\.\s+(Contact\s*:.*)$', l, re.IGNORECASE)
+        if m and len(m.group(1).strip()) > 5:
+            expanded.append(m.group(1).strip() + '.')
+            expanded.append(m.group(2).strip())
+            continue
+
+        # Pre-split contact de queue après tiret : "F4 duplex... - email@... - Tel : 822692"
+        m_dash = re.search(r'^(.*?)\s+[-–—]\s+(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b.*)$', l, re.IGNORECASE)
+        if m_dash and len(m_dash.group(1).strip()) > 15:
+            expanded.append(m_dash.group(1).strip())
+            expanded.append(m_dash.group(2).strip())
+            continue
+
+        # Si l'annonce est un unique paragraphe compact sans saut de ligne
+        if len(lines) == 1 and len(l) > 35:
+            # Séparation de la clause de contact inline si présente
+            m_contact = re.search(
+                r'^(.*?)(?:\.|\s)\s*(\b(?:contactez[- ]nous|contactez|contacter|pour\s+(?:tout(?:e?s?)?\s+visite|tout(?:e?s?)?\s+renseignement|les\s+visites|organiser\s+une\s+visite|en\s+savoir\s+plus)|visite\s+avec)\b.*)$',
+                l,
+                re.IGNORECASE
+            )
+            if m_contact and len(m_contact.group(1).strip()) > 15:
+                body_part = m_contact.group(1).strip()
+                contact_part = m_contact.group(2).strip()
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', body_part) if s.strip()]
+                # Si le corps n'avait pas de ponctuation mais est long, découper par clauses
+                if len(sentences) <= 1 and len(body_part) > 150:
+                    clauses = [c.strip() for c in re.split(r'(?=\b(?:1|2|3|4)\s+(?:habitation|bungalow|grand|appartement|maison|villa|studio|f\d)\b|\b(?:nombreux|très\s+gros|situé\s+[aà])\b)', body_part, flags=re.IGNORECASE) if c.strip()]
+                    expanded.extend(clauses)
+                else:
+                    expanded.extend(sentences)
+                expanded.append(contact_part)
+                continue
+            else:
+                sentences = [s.strip() for s in re.split(r'(?<=[.!?])\s+', l) if s.strip()]
+                expanded.extend(sentences)
+                continue
+
+        expanded.append(l)
+
+    return expanded
+
+
 def split_body_and_footer(lines: List[str]) -> Tuple[List[str], List[str]]:
     """
     Sépare étanchément le corps descriptif du bien du bloc commercial de signature (Footer Boundary).
@@ -235,8 +319,8 @@ def split_body_and_footer(lines: List[str]) -> Tuple[List[str], List[str]]:
         # Détection d'un bloc contact en fin d'annonce (dans les 10 dernières lignes ou 2e moitié)
         if i >= len(lines) - 8 or i >= len(lines) // 2:
             if EMAIL_REGEX.search(clean) or ('tél' in clean.lower() and PHONE_NC_REGEX.search(clean)):
-                # Si la ligne précédente était un nom propre ou une amorce courte
-                if i > 0 and (len(lines[i-1]) < 35 and not any(k in lines[i-1].lower() for k in ['chambre', 'séjour', 'cuisine', 'terrasse'])):
+                # Si la ligne précédente était un nom propre avéré de négociateur
+                if i > 0 and is_likely_person_name(lines[i-1]):
                     footer_start_idx = i - 1
                 else:
                     footer_start_idx = i
@@ -312,17 +396,18 @@ def extract_direct_contacts_and_agency_metadata(
                     break
 
     # 2. Motifs syntaxiques intra-texte de contacts directs
+    PAT_PHONE = r'(?:(?:\+687|00687)\s*)?([02-9]\d{2}[\s.-]\d{3}|[02-9]\d(?:[\s.-]?\d{2}){2}|\b[2-9]\d{5}\b)'
     patterns = [
-        # "visites et négociations avec Tim au 85.46.55 ou Séverine au 90.57.97"
-        re.compile(r'(?:visites?\s*(?:et\s*n[ée]gociations?)?\s*)?(?:avec|contacter|joindre|appeler|demander)\s+([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s+(?:au|t[ée]l\s*:?|mobile\s*:?|le)\s*(?:(?:\+687|00687)\s*)?([02-9]\d{1,2}[\s.-]?\d{2,3}[\s.-]?\d{2})', re.IGNORECASE),
-        # "Tim au 85.46.55"
-        re.compile(r'\b([A-ZÀ-Ÿ][a-zà-ÿ\-]+)\s+au\s+(?:(?:\+687|00687)\s*)?([02-9]\d{1,2}[\s.-]?\d{2,3}[\s.-]?\d{2})'),
+        # "visites et négociations avec Tim au 85.46.55 ou Séverine au 90.57.97" / "visiter avec Antoine au 505.510"
+        re.compile(rf'(?:visites?|visiter)?\s*(?:et\s*n[ée]gociations?)?\s*(?:avec|contacter|joindre|appeler|demander)\s+([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s+(?:au|t[ée]l\s*:?|mobile\s*:?|le)\s*{PAT_PHONE}', re.IGNORECASE),
+        # "Tim au 85.46.55" / "Antoine au 505.510"
+        re.compile(rf'\b([A-ZÀ-Ÿ][a-zà-ÿ\-]+)\s+au\s+{PAT_PHONE}'),
         # "Contact : Marc DUPONT : 82.30.40"
-        re.compile(r'(?:contact|conseill[eè]re?|n[ée]gociat(?:eur|rice)|r[ée]f[ée]rent|agent)\s*:?\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*(?:au|:|\(|\-)?\s*(?:(?:\+687|00687)\s*)?([02-9]\d{1,2}[\s.-]?\d{2,3}[\s.-]?\d{2})', re.IGNORECASE),
+        re.compile(rf'(?:contact|conseill[eè]re?|n[ée]gociat(?:eur|rice)|r[ée]f[ée]rent|agent)\s*:?\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*(?:au|:|\(|\-)?\s*{PAT_PHONE}', re.IGNORECASE),
         # "Contact: CLARE CHRISTELLE (Tél: 79 40 01, Email: ...)"
-        re.compile(r'Contact\s*:\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*\(\s*T[ée]l\s*:\s*([02-9]\d{1,2}[\s.-]?\d{2,3}[\s.-]?\d{2})', re.IGNORECASE),
+        re.compile(rf'Contact\s*:\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*\(\s*T[ée]l\s*:\s*{PAT_PHONE}', re.IGNORECASE),
         # "85.46.55 (Tim)"
-        re.compile(r'(?:(?:\+687|00687)\s*)?([02-9]\d{1,2}[\s.-]?\d{2,3}[\s.-]?\d{2})\s*\(\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+)\s*\)', re.IGNORECASE),
+        re.compile(rf'{PAT_PHONE}\s*\(\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+)\s*\)', re.IGNORECASE),
     ]
 
     for pat in patterns:
@@ -510,10 +595,8 @@ def structure_description(raw_description: Optional[str]) -> Dict[str, Any]:
 
     raw_text = raw_description.strip()
 
-    # 1. Découpage du texte en lignes
-    clean_breaks = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
-    clean_breaks = re.sub(r'</?p>', '\n', clean_breaks, flags=re.IGNORECASE)
-    raw_lines = [l.strip() for l in clean_breaks.split('\n') if l.strip()]
+    # 1. Découpage et pré-segmentation des lignes du texte
+    raw_lines = pre_segment_raw_lines(raw_text)
 
     # 2. Segmentation Footer Boundary (isolation étanche de la signature)
     body_lines, footer_lines = split_body_and_footer(raw_lines)
@@ -521,9 +604,14 @@ def structure_description(raw_description: Optional[str]) -> Dict[str, Any]:
     # 3. Extraction des contacts directs et métadonnées d'agence
     direct_contacts, agency_metadata = extract_direct_contacts_and_agency_metadata(raw_text, footer_lines)
 
-    # 4. Si le corps est un seul bloc massif sans saut de ligne, découper par phrases
-    if len(body_lines) == 1 and len(body_lines[0]) > 150:
-        body_lines = [s.strip() for s in re.split(r'(?<=[.!?])\s+(?=[A-ZÀ-Ÿ])', body_lines[0]) if s.strip()]
+    # 4. Si une ligne du corps est un bloc massif sans saut de ligne, découper par phrases
+    expanded_body = []
+    for bl in body_lines:
+        if len(bl) > 120 and '.' in bl:
+            expanded_body.extend([s.strip() for s in re.split(r'(?<=[.!?])\s+', bl) if s.strip()])
+        else:
+            expanded_body.append(bl)
+    body_lines = expanded_body
 
     categorized_items: Dict[str, List[str]] = {cat["key"]: [] for cat in CATEGORY_DEFINITIONS}
     categorized_items["prestations_complementaires"] = []
