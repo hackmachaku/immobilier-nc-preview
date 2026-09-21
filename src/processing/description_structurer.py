@@ -172,6 +172,10 @@ def normalize_nc_phone(raw_phone: str) -> Optional[Dict[str, Any]]:
     if len(digits) > 6 and digits.startswith('687'):
         digits = digits[3:]
 
+    # Tolérance au 0 parasite métropolitain ou de frappe (ex: 0987266 -> 987266)
+    if len(digits) == 7 and digits.startswith('0') and digits[1] in ('2', '3', '4', '5', '7', '8', '9'):
+        digits = digits[1:]
+
     if len(digits) != 6:
         return None
 
@@ -251,8 +255,9 @@ def pre_segment_raw_lines(raw_text: str) -> List[str]:
     if not raw_text:
         return []
 
-    clean_breaks = re.sub(r'<br\s*/?>', '\n', raw_text, flags=re.IGNORECASE)
-    clean_breaks = re.sub(r'</?p>', '\n', clean_breaks, flags=re.IGNORECASE)
+    # Normalisation des tirets et déballage des balises HTML (ul, ol, li, p, br, div)
+    clean_text = raw_text.replace('\x96', '–')
+    clean_breaks = re.sub(r'</?(?:ul|ol|li|p|div|br)[^>]*>', '\n', clean_text, flags=re.IGNORECASE)
     lines = [l.strip() for l in clean_breaks.split('\n') if l.strip()]
 
     expanded = []
@@ -318,7 +323,7 @@ def split_body_and_footer(lines: List[str]) -> Tuple[List[str], List[str]]:
             break
         # Détection d'un bloc contact en fin d'annonce (dans les 10 dernières lignes ou 2e moitié)
         if i >= len(lines) - 8 or i >= len(lines) // 2:
-            if EMAIL_REGEX.search(clean) or ('tél' in clean.lower() and PHONE_NC_REGEX.search(clean)):
+            if EMAIL_REGEX.search(clean) or (('tél' in clean.lower() or 'contact' in clean.lower()) and PHONE_NC_REGEX.search(clean)):
                 # Si la ligne précédente était un nom propre avéré de négociateur
                 if i > 0 and is_likely_person_name(lines[i-1]):
                     footer_start_idx = i - 1
@@ -396,14 +401,14 @@ def extract_direct_contacts_and_agency_metadata(
                     break
 
     # 2. Motifs syntaxiques intra-texte de contacts directs
-    PAT_PHONE = r'(?:(?:\+687|00687)\s*)?([02-9]\d{2}[\s.-]\d{3}|[02-9]\d(?:[\s.-]?\d{2}){2}|\b[2-9]\d{5}\b)'
+    PAT_PHONE = r'(?:(?:\+687|00687)\s*)?(?:0\s*)?([02-9]\d{2}[\s.-]\d{3}|[02-9]\d(?:[\s.-]?\d{2}){2}|\b[2-9]\d{5}\b)'
     patterns = [
         # "visites et négociations avec Tim au 85.46.55 ou Séverine au 90.57.97" / "visiter avec Antoine au 505.510"
         re.compile(rf'(?:visites?|visiter)?\s*(?:et\s*n[ée]gociations?)?\s*(?:avec|contacter|joindre|appeler|demander)\s+([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s+(?:au|t[ée]l\s*:?|mobile\s*:?|le)\s*{PAT_PHONE}', re.IGNORECASE),
         # "Tim au 85.46.55" / "Antoine au 505.510"
         re.compile(rf'\b([A-ZÀ-Ÿ][a-zà-ÿ\-]+)\s+au\s+{PAT_PHONE}'),
-        # "Contact : Marc DUPONT : 82.30.40"
-        re.compile(rf'(?:contact|conseill[eè]re?|n[ée]gociat(?:eur|rice)|r[ée]f[ée]rent|agent)\s*:?\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*(?:au|:|\(|\-)?\s*{PAT_PHONE}', re.IGNORECASE),
+        # "Contact : Marc DUPONT : 82.30.40" / "Contact : Manu – 98.72.66"
+        re.compile(rf'(?:contact|conseill[eè]re?|n[ée]gociat(?:eur|rice)|r[ée]f[ée]rent|agent)\s*:?\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*(?:au|:|\(|\-|[–—\x96])?\s*{PAT_PHONE}', re.IGNORECASE),
         # "Contact: CLARE CHRISTELLE (Tél: 79 40 01, Email: ...)"
         re.compile(rf'Contact\s*:\s*([A-ZÀ-Ÿ][a-zà-ÿ\-]+(?:\s+[A-ZÀ-Ÿ][A-Za-zÀ-Ÿ\-]+)?)\s*\(\s*T[ée]l\s*:\s*{PAT_PHONE}', re.IGNORECASE),
         # "85.46.55 (Tim)"
@@ -577,7 +582,7 @@ def classify_bullet_or_sentence(text: str) -> str:
     return "cadre_vie"
 
 
-def structure_description(raw_description: Optional[str]) -> Dict[str, Any]:
+def structure_description(raw_description: Optional[str], property_type: Optional[str] = None) -> Dict[str, Any]:
     """
     Fonction principale de structuration sémantique de la description d'un bien.
     Retourne la fiche structurée, les contacts négociateurs, les métadonnées agence,
@@ -647,9 +652,20 @@ def structure_description(raw_description: Optional[str]) -> Dict[str, Any]:
             cleaned_lines_all.append(seg_clean)
 
     # 5. Assembler les sections finales dans l'ordre strict
+    is_commercial = False
+    if property_type and any(t in str(property_type).upper() for t in ['BUREAU', 'COMMERCIAL', 'DOCK', 'LOCAL']):
+        is_commercial = True
+    elif any(w in raw_text.lower() for w in ['local commercial', 'bureaux', 'dock artisanal', 'dock industriel', 'activité tertiaire']):
+        is_commercial = True
+
     sections = []
     category_titles = {c["key"]: (c["title"], c["icon"]) for c in CATEGORY_DEFINITIONS}
     category_titles["prestations_complementaires"] = ("Équipements & Prestations complémentaires", "✨")
+
+    if is_commercial:
+        category_titles["espace_nuit"] = ("Bureaux & Espaces professionnels", "🏢")
+        category_titles["cadre_vie"] = ("Implantation & Visibilité commerciale", "📍")
+        category_titles["stationnement_annexes"] = ("Stationnement & Logistique", "🚗")
 
     ordered_keys = [
         "cadre_vie",

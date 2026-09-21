@@ -391,9 +391,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         img_url = ""
                 # Nettoyage de la balise technique dans la description
                 desc = re.sub(r"\[IMG:\s*https?://[^\]]+\]", "", desc).strip()
-                struct_desc = structure_description(desc)
-
                 prop_type = str(row.get("property_type") or "").upper()
+                struct_desc = structure_description(desc, property_type=prop_type)
                 is_dock = prop_type == "DOCK"
                 has_sea_view = bool(row.get("has_sea_view"))
 

@@ -280,3 +280,46 @@ def test_inline_dash_separated_contact():
     all_items_str = " ".join(" ".join(s["items"]) for s in res["sections"])
     assert "aude@yahoo.fr" not in all_items_str
 
+
+def test_bureau_pk6_top_immo_manu_case_study():
+    """Test du cas réel Bureau PK6 (Top Immo / Manu – 98.72.66 / bien commercial)."""
+    raw_text = """A VENDRE – LOCAL COMMERCIAL / BUREAUX 6ème KM (Rue Iekawé)<br />
+<br />
+Local commercial aménagé, bénéficiant d'une excellente visibilité en rez-de-chaussée d'une résidence récente au 6ème km. Idéal pour une activité tertiaire, médicale, restauration légère ou services.<br />
+<br />
+DESCRIPTION<br />
+<br />
+<ul type='disc'><li>Surface principale : 85 m²</li><li>Dock / réserve de 45 m² (hauteur 3 m)</li><li>5 places de parking dont 2 couvertes</li><li>Grande pièce principale de 30 m²</li><li>3 bureaux</li><li>Cafétéria équipée avec cuisine</li><li>WC séparé</li><li>Volets roulants électriques</li><li>Climatisation intégrale</li></ul>Local libre rapidement.<br />
+<br />
+PRIX DE VENTE<br />
+26 MF<br />
+<br />
+Location possible à 170 000 F/mois + 12 000 F/mois de charges<br />
+<br />
+Contact : Manu – 98.72.66"""
+
+    res = structure_description(raw_text, property_type="BUREAU")
+    assert res["has_structured"] is True
+
+    # 1. Contact négociateur direct Manu extrait
+    assert len(res["direct_contacts"]) >= 1
+    manu = next((c for c in res["direct_contacts"] if "MANU" in c["name"].upper()), None)
+    assert manu is not None
+    assert "98.72.66" in manu["phone"] or "987266" in manu["raw_phone"]
+    assert manu["is_mobile"] is True
+
+    # 2. Rubrique commerciale adaptée (pas de mention Espace Nuit pour un bureau)
+    keys = [s["key"] for s in res["sections"]]
+    titles = [s["title"] for s in res["sections"]]
+    assert not any("nuit" in t.lower() for t in titles)
+    assert any("bureaux" in t.lower() or "professionnels" in t.lower() for t in titles)
+
+    # 3. Absence de signature résiduelle dans les sections
+    all_body_items = []
+    for s in res["sections"]:
+        all_body_items.extend(s["items"])
+    all_body_str = " ".join(all_body_items)
+    assert "Contact : Manu" not in all_body_str
+    assert "98.72.66" not in all_body_str
+
+
