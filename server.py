@@ -22,6 +22,7 @@ from src.utils.logger import get_logger, DEFAULT_LOG_FILE
 from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
+from src.processing.description_structurer import structure_description
 import ssl
 import urllib.request
 
@@ -390,6 +391,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         img_url = ""
                 # Nettoyage de la balise technique dans la description
                 desc = re.sub(r"\[IMG:\s*https?://[^\]]+\]", "", desc).strip()
+                struct_desc = structure_description(desc)
 
                 prop_type = str(row.get("property_type") or "").upper()
                 is_dock = prop_type == "DOCK"
@@ -779,6 +781,9 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "image": img_url,
                     "images": images,
                     "description": desc,
+                    "structuredDescription": struct_desc.get("sections", []),
+                    "descriptionHighlights": struct_desc.get("key_highlights", []),
+                    "directContacts": struct_desc.get("direct_contacts", []),
                     "features": features,
                     "priceHistory": price_history,
                     "aiAnalysis": {

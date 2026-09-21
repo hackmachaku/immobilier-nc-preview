@@ -3352,10 +3352,73 @@
             </div>
           ` : ''}
 
-          <!-- DESCRIPTION DU BIEN -->
-          <div>
-            <h4 class="text-sm font-bold text-white mb-2">Description complète du bien</h4>
-            <p class="text-xs sm:text-sm text-slate-300 leading-relaxed bg-slate-900/50 p-4 rounded-xl border border-slate-800 whitespace-pre-line">${item.description}</p>
+          <!-- DESCRIPTION DU BIEN STRUCTURÉE ET TRANSPARENTE -->
+          <div class="space-y-3">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div class="flex items-center gap-2">
+                <span class="text-base">📝</span>
+                <h4 class="text-sm font-bold text-white">Descriptif & Caractéristiques du bien</h4>
+              </div>
+              <!-- Double-Vue Toggle -->
+              <div class="inline-flex p-1 rounded-xl bg-slate-950/80 border border-slate-800 self-start sm:self-auto">
+                <button id="btnDescStructured_${item.id}" onclick="toggleDescriptionView('${item.id}', 'structured')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-500/50 shadow-sm transition-all flex items-center gap-1.5">
+                  <span>✨</span> Fiche Structurée
+                </button>
+                <button id="btnDescRaw_${item.id}" onclick="toggleDescriptionView('${item.id}', 'raw')" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/60 transition-all flex items-center gap-1.5">
+                  <span>📄</span> Texte Brut
+                </button>
+              </div>
+            </div>
+
+            <!-- Badges Atouts Clés (Key Highlights) -->
+            ${(item.descriptionHighlights && item.descriptionHighlights.length > 0) ? `
+              <div class="flex flex-wrap gap-2 pt-1 pb-0.5">
+                ${item.descriptionHighlights.map(h => `
+                  <span class="px-2.5 py-1 rounded-lg text-xs font-semibold bg-sky-950/50 border border-sky-500/30 text-sky-300 shadow-sm flex items-center gap-1.5">
+                    ${h}
+                  </span>
+                `).join('')}
+              </div>
+            ` : ''}
+
+            <!-- Vue 1 : Fiche Structurée en Rubriques Invariantes -->
+            <div id="descStructured_${item.id}" class="space-y-3">
+              ${(item.structuredDescription && item.structuredDescription.length > 0) ? `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  ${item.structuredDescription.map(sec => `
+                    <div class="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 hover:border-slate-700/80 transition-all ${sec.key === 'cadre_vie' || sec.key === 'prestations_complementaires' ? 'md:col-span-2' : ''}">
+                      <div class="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-800/60">
+                        <span class="text-base">${sec.icon || '📌'}</span>
+                        <h5 class="text-xs font-bold text-sky-300 uppercase tracking-wider">${sec.title}</h5>
+                      </div>
+                      <ul class="space-y-1.5 text-xs text-slate-300">
+                        ${sec.items.map(bullet => `
+                          <li class="flex items-start gap-2 leading-relaxed">
+                            <span class="text-sky-400 font-bold select-none leading-none pt-0.5">•</span>
+                            <span class="text-slate-200">${bullet}</span>
+                          </li>
+                        `).join('')}
+                      </ul>
+                    </div>
+                  `).join('')}
+                </div>
+              ` : `
+                <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800">
+                  <p class="text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line">${item.description}</p>
+                </div>
+              `}
+            </div>
+
+            <!-- Vue 2 : Texte Brut Original (Intégrité 100%) -->
+            <div id="descRaw_${item.id}" class="hidden">
+              <div class="p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-2">
+                <div class="flex items-center justify-between text-[11px] text-slate-400 pb-1.5 border-b border-slate-800">
+                  <span>Texte original intégral publié par l'agence sans altération</span>
+                  <span class="font-mono text-slate-500">${(item.description || '').length} caractères</span>
+                </div>
+                <p class="text-xs text-slate-300 font-mono leading-relaxed whitespace-pre-line select-text">${item.description}</p>
+              </div>
+            </div>
           </div>
 
           <!-- BLOC AUDIT DE GÉOLOCALISATION HAUTE PRÉCISION & DATATION DES PHOTOS -->
@@ -3551,20 +3614,59 @@
           </div>
 
           <!-- CONTACT & ACTIONS DIRECTES -->
-          <div class="p-5 rounded-2xl bg-slate-900 border border-sky-500/30">
-            <h4 class="text-xs font-semibold text-sky-400 uppercase tracking-wider mb-2">Coordonnées de l'Annonce</h4>
-            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div class="p-5 rounded-2xl bg-slate-900 border border-sky-500/30 space-y-4">
+            <h4 class="text-xs font-semibold text-sky-400 uppercase tracking-wider">Coordonnées & Prise de Contact</h4>
+
+            ${(item.directContacts && item.directContacts.length > 0) ? `
+              <!-- NÉGOCIATEURS & CONTACTS DIRECTS DÉDIÉS -->
+              <div class="p-4 rounded-xl bg-gradient-to-r from-emerald-950/50 via-slate-900 to-sky-950/40 border border-emerald-500/40 space-y-3">
+                <div class="flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-base">👤</span>
+                    <span class="text-xs font-bold text-emerald-300">
+                      Négociateur(s) référent(s) de l'annonce
+                    </span>
+                  </div>
+                  <span class="text-[10px] text-emerald-300 bg-emerald-950/80 px-2 py-0.5 rounded border border-emerald-700/60 font-medium">
+                    Ligne Directe NC
+                  </span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  ${item.directContacts.map(c => `
+                    <div class="flex items-center justify-between p-3 rounded-lg bg-slate-900/90 border border-slate-800 hover:border-emerald-500/40 transition-all">
+                      <div>
+                        <div class="font-bold text-white text-xs flex items-center gap-1.5">
+                          <span>${c.name}</span>
+                        </div>
+                        <div class="text-[11px] text-slate-300 font-mono pt-0.5">${c.phone}</div>
+                      </div>
+                      <div class="flex items-center gap-1.5">
+                        <a href="tel:${c.phone}" class="px-2.5 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold transition-all inline-flex items-center gap-1 shadow-sm">
+                          📞 Appeler
+                        </a>
+                        <a href="https://wa.me/${c.whatsapp}" target="_blank" rel="noopener noreferrer" class="px-2.5 py-1.5 rounded-lg bg-emerald-950 hover:bg-emerald-900 border border-emerald-600/50 text-emerald-300 text-[11px] font-bold transition-all inline-flex items-center gap-1">
+                          💬 WA
+                        </a>
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+              </div>
+            ` : ''}
+
+            <!-- COORDONNÉES DE L'AGENCE SOURCE -->
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-1">
               <div>
                 <p class="text-base font-bold text-white">${item.agencyName}</p>
-                <p class="text-sm text-slate-300">Tél : <a href="tel:${item.agencyPhone}" class="text-sky-400 hover:underline font-semibold">${item.agencyPhone}</a></p>
+                <p class="text-sm text-slate-300">Tél agence : <a href="tel:${item.agencyPhone}" class="text-sky-400 hover:underline font-semibold">${item.agencyPhone}</a></p>
                 <p class="text-xs text-slate-400 mt-0.5">Source : <strong>${item.source}</strong></p>
               </div>
               <div class="flex flex-wrap gap-2">
                 <a href="tel:${item.agencyPhone}" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-all">
-                  📞 Appeler
+                  📞 Appeler l'agence
                 </a>
                 <a href="https://wa.me/${item.whatsapp}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all">
-                  💬 WhatsApp
+                  💬 WhatsApp Agence
                 </a>
                 <a href="${item.sourceUrl}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold transition-all inline-flex items-center gap-1.5">
                   <span>🔗 Annonce source</span>
@@ -3637,6 +3739,34 @@
         .catch(err => {
           container.innerHTML = `<span class="text-slate-400">Règlementation d'urbanisme applicable selon le PUD communal.</span>`;
         });
+    }
+
+    function toggleDescriptionView(id, mode) {
+      const secStructured = document.getElementById('descStructured_' + id);
+      const secRaw = document.getElementById('descRaw_' + id);
+      const btnStructured = document.getElementById('btnDescStructured_' + id);
+      const btnRaw = document.getElementById('btnDescRaw_' + id);
+      if (!secStructured || !secRaw) return;
+
+      if (mode === 'raw') {
+        secStructured.classList.add('hidden');
+        secRaw.classList.remove('hidden');
+        if (btnStructured) {
+          btnStructured.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/60 transition-all flex items-center gap-1.5';
+        }
+        if (btnRaw) {
+          btnRaw.className = 'px-2.5 py-1 rounded-lg text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-500/50 shadow-sm transition-all flex items-center gap-1.5';
+        }
+      } else {
+        secStructured.classList.remove('hidden');
+        secRaw.classList.add('hidden');
+        if (btnStructured) {
+          btnStructured.className = 'px-2.5 py-1 rounded-lg text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-500/50 shadow-sm transition-all flex items-center gap-1.5';
+        }
+        if (btnRaw) {
+          btnRaw.className = 'px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/60 transition-all flex items-center gap-1.5';
+        }
+      }
     }
 
     function closeDetailModal() {
