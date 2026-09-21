@@ -156,6 +156,94 @@
           "description": "Périphérie nord vers le col de la Pirogue",
           "latitude": -22.222,
           "longitude": 166.488
+        },
+        {
+          "nom": "PK6",
+          "secteur": "Nord Résidentiel",
+          "standing": "Accessible / Intermédiaire",
+          "description": "Sixième kilomètre le long de la rue Jacques Iékawé et rue Racine",
+          "latitude": -22.235,
+          "longitude": 166.472
+        },
+        {
+          "nom": "PK7",
+          "secteur": "Nord Résidentiel",
+          "standing": "Accessible / Intermédiaire",
+          "description": "Septième kilomètre en direction du col de Tina et Normandie",
+          "latitude": -22.227,
+          "longitude": 166.478
+        },
+        {
+          "nom": "PK4",
+          "secteur": "Nord Central",
+          "standing": "Accessible",
+          "description": "Quatrième kilomètre entre Vallée du Tir et Rivière Salée",
+          "latitude": -22.248,
+          "longitude": 166.460
+        },
+        {
+          "nom": "Portes de Fer",
+          "secteur": "Centre Est",
+          "standing": "Intermédiaire",
+          "description": "Quartier résidentiel central et verdoyant",
+          "latitude": -22.255,
+          "longitude": 166.458
+        },
+        {
+          "nom": "Haut-Magenta",
+          "secteur": "Est",
+          "standing": "Intermédiaire",
+          "description": "Hauteurs de Magenta avec vue dégagée vers la baie et les collines",
+          "latitude": -22.260,
+          "longitude": 166.468
+        },
+        {
+          "nom": "Quartier Latin",
+          "secteur": "Centre Historique",
+          "standing": "Intermédiaire / Caractère",
+          "description": "Quartier vivant proche du port, musées, cinémas et commerces",
+          "latitude": -22.274,
+          "longitude": 166.444
+        },
+        {
+          "nom": "Orphelinat",
+          "secteur": "Sud Ouest Baie",
+          "standing": "Haut de gamme",
+          "description": "Baie de l'Orphelinat, promenade et marina",
+          "latitude": -22.285,
+          "longitude": 166.440
+        },
+        {
+          "nom": "Nouville",
+          "secteur": "Presqu'île Ouest",
+          "standing": "Universitaire / Médical",
+          "description": "Université UNC, clinique Kuindo-Magnin, théâtre et littoral",
+          "latitude": -22.265,
+          "longitude": 166.425
+        },
+        {
+          "nom": "Montravel",
+          "secteur": "Centre Nord",
+          "standing": "Accessible",
+          "description": "Colline surplombant le port autonome et la rade",
+          "latitude": -22.253,
+          "longitude": 166.447
+        },
+        {
+          "nom": "Kaméré",
+          "secteur": "Presqu'île Nord Ouest",
+          "standing": "Accessible",
+          "description": "Quartier résidentiel littoral de la presqu'île de Ducos",
+          "latitude": -22.245,
+          "longitude": 166.418
+        },
+        {
+          "nom": "Tindu",
+          "secteur": "Presqu'île Nord",
+          "standing": "Accessible",
+          "description": "Pointe nord résidentielle de la presqu'île de Ducos",
+          "latitude": -22.238,
+          "longitude": 166.425
         }
       ]
     },
@@ -211,6 +299,22 @@
           "description": "Secteur intermédiaire le long de la RT1",
           "latitude": -22.172,
           "longitude": 166.452
+        },
+        {
+          "nom": "Val Fleuri",
+          "secteur": "Dumbéa Sud",
+          "standing": "Pavillonnaire",
+          "description": "Lotissements résidentiels verdoyants proches de Koutio",
+          "latitude": -22.195,
+          "longitude": 166.455
+        },
+        {
+          "nom": "Plaine de Koé",
+          "secteur": "Dumbéa Nord",
+          "standing": "Pavillonnaire / Nature",
+          "description": "Plaine résidentielle verdoyante et calme le long de la rivière",
+          "latitude": -22.160,
+          "longitude": 166.465
         }
       ]
     },
@@ -345,6 +449,22 @@
           "description": "Propriétés sur grands terrains au pied de la montagne",
           "latitude": -22.098,
           "longitude": 166.350
+        },
+        {
+          "nom": "Tontouta",
+          "secteur": "Païta Nord",
+          "standing": "Aéroport / Pavillonnaire",
+          "description": "Secteur aéroport international et lotissements de La Tontouta",
+          "latitude": -22.020,
+          "longitude": 166.215
+        },
+        {
+          "nom": "Naïa",
+          "secteur": "Païta Côtier",
+          "standing": "Lotissement Littoral",
+          "description": "Lotissement maritime et résidentiel bord de mer",
+          "latitude": -22.140,
+          "longitude": 166.305
         }
       ]
     }

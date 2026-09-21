@@ -410,11 +410,33 @@ class CadastreSpatialIndex:
                     target_com = b_name
                     break
 
-        # Niveau 1 : Détection immeuble REFIL avec vérification communale stricte
+        # Détection préalable du quartier par le référentiel si non renseigné
+        clean_q = str(quartier or "").lower().strip()
+        if not clean_q or clean_q in ("secteur calédonien", "secteur", "none"):
+            try:
+                from src.reference.geo import GeoReferential
+                geo_ref = GeoReferential()
+                c_cand, q_cand, _ = geo_ref.find_location(title or "")
+                if q_cand:
+                    clean_q = q_cand.lower().strip()
+                    if target_com == "NOUMEA" and c_cand.value != "AUTRE":
+                        target_com = c_cand.value
+                else:
+                    c_cand, q_cand, _ = geo_ref.find_location(text_clean)
+                    if q_cand:
+                        clean_q = q_cand.lower().strip()
+            except Exception:
+                pass
+
+        # Niveau 1 : Détection immeuble REFIL avec vérification communale et de quartier stricte
         COMMON_WORDS = {
             "berger", "dominique", "niaoulis", "palmiers", "soleil", "colline",
             "terrasse", "plage", "grand sud", "jardin", "marina", "baie",
-            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer"
+            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer",
+            "belle vue", "bel air", "beau site", "panorama", "les horizons", "horizons",
+            "le rocher", "rocher", "oasis", "paradis", "le parc", "les jardins",
+            "grand large", "flamboyant", "flamboyants", "bougainvillea", "alizes",
+            "les alizes", "bleu", "vert", "harmonie", "clairiere", "hauteurs"
         }
         TRIGGERS = ("résidence", "residence", "immeuble", "bâtiment", "batiment", "domaine", "lotissement", "tour")
 
@@ -425,17 +447,27 @@ class CadastreSpatialIndex:
                 if not (b_bounds["lat_min"] <= b_lat <= b_bounds["lat_max"] and b_bounds["lon_min"] <= b_lon <= b_bounds["lon_max"]):
                     continue
 
-                # Si le nom est un mot commun ou court, exiger un déclencheur
+                # Détection du déclencheur contextuel ("résidence", "immeuble", etc.)
+                has_trigger = any(
+                    f"{cw} {b_nom}" in text_clean or f"{cw} « {b_nom} »" in text_clean or f"{cw} \"{b_nom}\"" in text_clean
+                    for cw in TRIGGERS
+                )
+
+                # Si mot commun ou nom court, exiger impérativement un déclencheur
                 if b_nom in COMMON_WORDS or len(b_nom) < 7:
-                    matched_trigger = any(
-                        f"{cw} {b_nom}" in text_clean or f"{cw} « {b_nom} »" in text_clean or f"{cw} \"{b_nom}\"" in text_clean
-                        for cw in TRIGGERS
-                    )
-                    if not matched_trigger:
+                    if not has_trigger:
                         continue
                 else:
                     if not (f" {b_nom} " in f" {text_clean} " or f"'{b_nom}" in text_clean or f'"{b_nom}' in text_clean or f"({b_nom}" in text_clean):
                         continue
+
+                # Vérifier la cohérence inter-quartier si aucun déclencheur explicite ou si mot commun
+                if (not has_trigger or b_nom in COMMON_WORDS) and clean_q and clean_q not in ("secteur calédonien", "secteur", "none", ""):
+                    if q_refil and str(q_refil).lower() not in ("none", ""):
+                        q_c = clean_q.replace("-", " ").replace("_", " ")
+                        q_rc = str(q_refil).lower().replace("-", " ").replace("_", " ")
+                        if q_c not in q_rc and q_rc not in q_c:
+                            continue
 
                 return {
                     "lat": b_lat,
@@ -448,7 +480,6 @@ class CadastreSpatialIndex:
 
         # Niveau 2 : Répartition sur parcelle cadastrale réelle du quartier DANS la commune
         q_pool = self.commune_quartier_parcels.get(target_com, {})
-        clean_q = str(quartier or "").lower().strip()
         p_list = q_pool.get(clean_q)
         if not p_list:
             for k, v in q_pool.items():
@@ -457,7 +488,7 @@ class CadastreSpatialIndex:
                     break
         if not p_list:
             for k, v in q_pool.items():
-                if len(k) >= 5 and re.search(r"\b" + re.escape(k) + r"\b", text_clean):
+                if len(k) >= 4 and re.search(r"\b" + re.escape(k) + r"\b", text_clean):
                     p_list = v
                     break
 
@@ -474,8 +505,18 @@ class CadastreSpatialIndex:
         # Niveau 3 : Répartition sur le vivier de parcelles cadastrales de la commune
         c_pool = self.commune_parcels.get(target_com)
         if c_pool:
-            idx = abs(hash(str(item_id))) % len(c_pool)
-            p = c_pool[idx]
+            # Pour Nouméa, exclure la zone industrielle de Ducos du vivier de repli résidentiel par défaut
+            if target_com == "NOUMEA":
+                res_pool = [
+                    p for p in c_pool 
+                    if not (-22.258 <= p["lat"] <= -22.235 and 166.425 <= p["lon"] <= 166.442)
+                ]
+                pool_to_use = res_pool if res_pool else c_pool
+            else:
+                pool_to_use = c_pool
+
+            idx = abs(hash(str(item_id))) % len(pool_to_use)
+            p = pool_to_use[idx]
             return {
                 "lat": p["lat"],
                 "lon": p["lon"],

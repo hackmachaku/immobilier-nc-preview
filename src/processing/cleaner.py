@@ -340,8 +340,21 @@ class ListingCleaner:
             standard_surfaces = {1: 30.0, 2: 50.0, 3: 75.0, 4: 100.0, 5: 135.0, 6: 170.0}
             surface_hab = standard_surfaces.get(rooms, float(rooms * 25.0))
 
-        # Localisation
-        commune, quartier, _ = self.geo_ref.find_location(f"{raw.raw_location or ''} {raw.title} {raw.description or ''}")
+        # Localisation hiérarchique :
+        # 1. Vérifier si le titre déclare un quartier précis (ex: "à Nouméa (P.k. 6)")
+        clean_desc = re.sub(r'(?:contact|tél|tel|email|mail|agent|notre agence|retrouvez-nous)\s*:?.*', '', raw.description or '', flags=re.IGNORECASE)
+        commune, quartier, _ = self.geo_ref.find_location(raw.title or "")
+
+        # 2. Si le titre n'a pas de quartier précis (ex: titre générique "Maison F4"),
+        # analyser conjointement la localisation déclarée et le descriptif nettoyé
+        if not quartier:
+            blob_loc = f"{raw.raw_location or ''} {clean_desc}".strip()
+            c_blob, q_blob, _ = self.geo_ref.find_location(blob_loc)
+            if q_blob:
+                quartier = q_blob
+                commune = c_blob
+            elif commune == Commune.AUTRE and c_blob != Commune.AUTRE:
+                commune = c_blob
 
         unique_id = f"{raw.source.lower()}_{raw.source_id}"
 

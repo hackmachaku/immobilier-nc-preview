@@ -298,10 +298,24 @@ class GeoPrecisionEnricher:
 
         com_clean = str(commune or "").upper().replace("-", "_").replace(" ", "_") if commune else None
 
+        # Si le quartier n'est pas passé, tenter une détection par le titre/texte
+        if not quartier or str(quartier).strip().lower() in ("secteur calédonien", "secteur", "none", ""):
+            try:
+                from src.reference.geo import GeoReferential
+                _, q_found, _ = GeoReferential().find_location(text)
+                if q_found:
+                    quartier = q_found
+            except Exception:
+                pass
+
         COMMON_WORDS = {
             "berger", "dominique", "niaoulis", "palmiers", "soleil", "colline",
             "terrasse", "plage", "grand sud", "jardin", "marina", "baie",
-            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer"
+            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer",
+            "belle vue", "bel air", "beau site", "panorama", "les horizons", "horizons",
+            "le rocher", "rocher", "oasis", "paradis", "le parc", "les jardins",
+            "grand large", "flamboyant", "flamboyants", "bougainvillea", "alizes",
+            "les alizes", "bleu", "vert", "harmonie", "clairiere", "hauteurs"
         }
         context_triggers = ["résidence", "residence", "immeuble", "lotissement", "domaine", "tour", "bâtiment", "batiment", "villa"]
 
@@ -320,16 +334,33 @@ class GeoPrecisionEnricher:
                     if -22.48 <= lat <= -22.05 and 166.05 <= lon <= 167.00:
                         continue
 
-            if name in text_clean:
-                # Si mot commun ou nom court, exiger impérativement un déclencheur contextuel
-                if name in COMMON_WORDS or len(name) < 7:
-                    for cw in context_triggers:
-                        if f"{cw} {name}" in text_clean or f"{cw} « {name} »" in text_clean or f"{cw} \"{name}\"" in text_clean:
-                            return entry
-                else:
-                    # Vérifier présence en mot entier
-                    if re.search(r'\b' + re.escape(name) + r'\b', text_clean):
-                        return entry
+            # Détection du déclencheur contextuel ("résidence", "immeuble", etc.)
+            has_trigger = any(
+                f"{cw} {name}" in text_clean or f"{cw} « {name} »" in text_clean or f"{cw} \"{name}\"" in text_clean
+                for cw in context_triggers
+            )
+
+            # Si mot commun ou nom court, exiger impérativement un déclencheur contextuel
+            if name in COMMON_WORDS or len(name) < 7:
+                if not has_trigger:
+                    continue
+            else:
+                # Vérifier présence en mot entier
+                if not re.search(r'\b' + re.escape(name) + r'\b', text_clean):
+                    continue
+
+            # Vérification de cohérence inter-quartier :
+            # Si aucun déclencheur explicite ('résidence X') n'a été utilisé ou si mot commun,
+            # vérifier que le quartier ne contredit pas radicalement le quartier déclaré
+            if (not has_trigger or name in COMMON_WORDS) and quartier and str(quartier).strip().lower() not in ("secteur calédonien", "secteur", "none", ""):
+                q_ref = str(entry.get("quartier") or "").strip()
+                if q_ref and q_ref.lower() not in ("none", ""):
+                    q_c = quartier.lower().replace("-", " ").replace("_", " ")
+                    q_rc = q_ref.lower().replace("-", " ").replace("_", " ")
+                    if q_c not in q_rc and q_rc not in q_c:
+                        continue
+
+            return entry
         return None
 
     def extract_cadastre_lot_reference(self, text: str) -> Optional[str]:

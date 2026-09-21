@@ -449,7 +449,17 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 commune_enum = str(row.get("commune") or "NOUMEA").upper()
                 commune_raw = COMMUNE_MAP.get(commune_enum, commune_enum.replace("_", "-").title())
 
-                quartier = safe_str(row.get("quartier"), "Secteur Calédonien")
+                raw_q = row.get("quartier")
+                if pd.isna(raw_q) or not str(raw_q).strip() or str(raw_q).strip().lower() in ("none", "nan", "secteur calédonien"):
+                    try:
+                        from src.reference.geo import GeoReferential
+                        _, q_detected, _ = GeoReferential().find_location(str(row.get("title") or ""))
+                        quartier = q_detected or "Secteur Calédonien"
+                    except Exception:
+                        quartier = "Secteur Calédonien"
+                else:
+                    quartier = str(raw_q).strip()
+
                 lat_val, lon_val = resolve_listing_coords(
                     str(row.get("id")), commune_enum, quartier, title=str(row.get("title") or ""), description=desc
                 )
