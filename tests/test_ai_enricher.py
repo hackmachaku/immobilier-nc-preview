@@ -109,3 +109,79 @@ def test_ai_cache_operations():
     assert "cached_count" in stats
     cleared = clear_ai_cache()
     assert cleared is True
+
+
+def test_sanitize_ai_contacts_grounding_rejects_hallucinations():
+    """
+    Vérifie que le Grounding Check Python rejette formellement toute fuite de prompt
+    (ex: Manu 98.72.66) et résout 'contactez l'agence au 284.282' vers l'agence.
+    """
+    from src.processing.ai_enricher import _sanitize_ai_contacts
+
+    raw_text = (
+        "immeuble roger berard au 4ème étage, plateau de bureaux aménagés "
+        "bénéficiant de 8 places de stationnement. pour les visites, contactez l'agence au 284.282 ..."
+    )
+
+    # Cas 1 : L'IA a halluciné Manu et 98.72.66 à cause d'une fuite d'exemple
+    fake_contacts = [
+        {"name": "Manu", "phone": "+687 98.72.66", "whatsapp": "687987266", "role": "Négociateur"}
+    ]
+    sanitized = _sanitize_ai_contacts(
+        fake_contacts,
+        raw_description=raw_text,
+        agency_name="CalÃ©donienne d",
+        agency_phone="+687 28.42.82"
+    )
+
+    # Manu doit impérativement être éliminé !
+    assert not any(c.get("name") == "Manu" for c in sanitized)
+    assert not any("98.72.66" in str(c.get("phone")) for c in sanitized)
+
+    # Le contact doit être attribué à l'agence Calédonienne d'Immobilier au 284.282
+    assert len(sanitized) >= 1
+    agency_contact = sanitized[0]
+    assert agency_contact["name"] == "Calédonienne d'Immobilier"
+    assert "284.282" in agency_contact["phone"] or "28.42.82" in agency_contact["phone"]
+    assert agency_contact["role"] == "Agence"
+
+
+def test_sanitize_ai_sections_grounding_rejects_fake_bullets():
+    """Vérifie que les puces de sections inventées sans fondement textuel sont éliminées."""
+    from src.processing.ai_enricher import _sanitize_ai_sections
+
+    raw_text = "immeuble roger berard au 4ème étage, plateau de bureaux aménagés bénéficiant de 8 places de stationnement."
+    fake_sections = [
+        {
+            "key": "bureaux",
+            "title": "Bureaux & Espaces professionnels",
+            "items": ["Plateau de bureaux aménagés au 4ème étage", "Dock réserve de 45 m²"]
+        },
+        {
+            "key": "stationnement",
+            "title": "Stationnement & Logistique",
+            "items": ["5 places de parking dont 2 couvertes", "8 places de stationnement"]
+        }
+    ]
+
+    clean = _sanitize_ai_sections(fake_sections, raw_description=raw_text, title="Bureau Roger Bérard")
+    all_bullets = [it for s in clean for it in s.get("items", [])]
+
+    # Vrais éléments du texte conservés
+    assert any("plateau de bureaux" in b.lower() for b in all_bullets)
+    assert any("8 places" in b.lower() for b in all_bullets)
+
+    # Hallucinations (dock 45m², 5 places) éliminées
+    assert not any("dock" in b.lower() for b in all_bullets)
+    assert not any("45 m²" in b.lower() for b in all_bullets)
+    assert not any("5 places" in b.lower() for b in all_bullets)
+
+
+def test_mojibake_and_agency_normalization():
+    """Vérifie la réparation du mojibake et la résolution d'agence tronquée."""
+    from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
+
+    assert normalize_agency_name("CalÃ©donienne d") == "Calédonienne d'Immobilier"
+    assert normalize_agency_name("caledonienne d") == "Calédonienne d'Immobilier"
+    assert fix_mojibake("bureau aménagé au 4ème étage") == "bureau aménagé au 4ème étage"
+    assert "Â" not in fix_mojibake("immeuble roger berardÂ  au 4ème étage")

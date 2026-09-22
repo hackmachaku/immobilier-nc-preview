@@ -19,6 +19,18 @@ NC_AGENCIES: List[Dict[str, Any]] = [
         "badge_color": "amber",
     },
     {
+        "id": "caledonienne_immo",
+        "name": "Calédonienne d'Immobilier",
+        "aliases": ["calédonienne d'immobilier", "caledonienne d'immobilier", "caledonienne d’immobilier", "calã©donienne d", "caledonienne d", "caledonienne", "caledonienne-immobilier.nc"],
+        "phone": "+687 28.42.82",
+        "email": "contact@caledonienne-immobilier.nc",
+        "website": "https://www.caledonienne-immobilier.nc",
+        "city": "Nouméa",
+        "domains": ["caledonienne-immobilier.nc"],
+        "logo_text": "CALÉDONIENNE",
+        "badge_color": "emerald",
+    },
+    {
         "id": "diot",
         "name": "Diot Immobilier",
         "aliases": ["diot", "diot immobilier", "diot.nc"],

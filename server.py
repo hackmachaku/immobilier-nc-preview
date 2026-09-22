@@ -22,6 +22,7 @@ from src.utils.logger import get_logger, DEFAULT_LOG_FILE
 from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
+from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
 from src.processing.description_structurer import structure_description
 from src.processing.ai_enricher import (
     check_ai_status,
@@ -595,7 +596,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
             for _, row in df.iterrows():
                 # 1. Extraction image : priorité absolue à la colonne image_url réelle
-                desc = row.get("description") or ""
+                desc = fix_mojibake(row.get("description") or "")
                 raw_img = row.get("image_url")
                 img_url = str(raw_img).strip() if pd.notna(raw_img) and str(raw_img).strip() else ""
                 if not img_url or img_url.lower() in ("none", "nan"):
@@ -954,6 +955,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         photo_badge = f"📷 Prise le {photo_date_str}"
 
                 # Résolution dynamique des coordonnées réelles d'agence
+                clean_agency_name = normalize_agency_name(row.get("agency_name"))
                 agency_meta = struct_desc.get("agency_metadata", {})
                 real_agency_phone = agency_meta.get("phone")
                 real_agency_email = agency_meta.get("email")
@@ -965,7 +967,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
                 if not final_agency_phone:
                     for ag in NC_AGENCIES:
-                        if ag.get("name") and ag["name"].lower() in str(row.get("agency_name") or "").lower():
+                        if ag.get("name") and (ag["name"].lower() == clean_agency_name.lower() or ag["name"].lower() in clean_agency_name.lower() or clean_agency_name.lower() in ag["name"].lower()):
                             if ag.get("phone"):
                                 final_agency_phone = ag["phone"]
                                 break
@@ -1022,7 +1024,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "marketTension": "Forte attractivité sur le secteur",
                     "source": str(row.get("source")),
                     "sourceUrl": str(row.get("url")),
-                    "agencyName": str(row.get("agency_name") or "Professionnel Immo NC"),
+                    "agencyName": clean_agency_name,
                     "agencyPhone": final_agency_phone,
                     "agencyEmail": real_agency_email,
                     "agencyHours": real_agency_hours,
