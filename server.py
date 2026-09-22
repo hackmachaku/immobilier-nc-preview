@@ -28,12 +28,14 @@ from src.processing.ai_enricher import (
     get_ai_config,
     save_ai_config,
     enrich_listing_with_ai,
+    batch_enrich_listings,
     ask_ai_chat,
     clear_ai_cache,
     get_ai_cache_stats
 )
 import ssl
 import urllib.request
+import time
 
 logger = get_logger("server")
 
@@ -41,6 +43,16 @@ PORT = 8080
 
 PARCEL_POLYGON_CACHE: Dict[str, Any] = {}
 _CACHED_LISTINGS_PAYLOAD: Optional[bytes] = None
+
+_BATCH_AI_JOB: Dict[str, Any] = {
+    "running": False,
+    "progress": 0,
+    "total": 0,
+    "current_title": "",
+    "started_at": None,
+    "last_result": None,
+    "stop_event": None
+}
 
 
 def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float = 0.0) -> Dict[str, Any]:
@@ -294,6 +306,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             return self.handle_get_parcel_polygon()
         elif path == "/api/cadastre/pud-rules":
             return self.handle_get_pud_rules()
+        elif path == "/api/ai/batch/status":
+            return self.handle_get_ai_batch_status()
         elif path == "/api/sources":
             return self.handle_get_sources()
         elif path == "/api/agencies":
@@ -322,8 +336,90 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             return self.handle_post_ai_chat()
         elif path == "/api/ai/cache/clear":
             return self.handle_post_ai_cache_clear()
+        elif path == "/api/ai/batch/start":
+            return self.handle_post_ai_batch_start()
+        elif path == "/api/ai/batch/cancel":
+            return self.handle_post_ai_batch_cancel()
 
         self._send_json({"error": "Endpoint not found"}, status_code=404)
+
+    def handle_post_ai_batch_start(self):
+        """Lance l'analyse et enrichissement IA par lot en tâche de fond."""
+        content_len = int(self.headers.get("Content-Length", 0))
+        body = {}
+        if content_len > 0:
+            try:
+                body = json.loads(self.rfile.read(content_len).decode("utf-8"))
+            except Exception:
+                pass
+
+        limit = int(body.get("limit", 10))
+        only_missing = bool(body.get("only_missing", True))
+        model = body.get("model")
+
+        global _BATCH_AI_JOB
+        if _BATCH_AI_JOB["running"]:
+            self._send_json({"success": False, "error": "Un traitement par lot est déjà en cours."}, status_code=409)
+            return
+
+        stop_event = threading.Event()
+        _BATCH_AI_JOB["running"] = True
+        _BATCH_AI_JOB["progress"] = 0
+        _BATCH_AI_JOB["total"] = limit
+        _BATCH_AI_JOB["current_title"] = "Initialisation du lot..."
+        _BATCH_AI_JOB["started_at"] = time.time()
+        _BATCH_AI_JOB["last_result"] = None
+        _BATCH_AI_JOB["stop_event"] = stop_event
+
+        def _worker():
+            global _BATCH_AI_JOB, _CACHED_LISTINGS_PAYLOAD
+            def _prog(curr, tot, title):
+                _BATCH_AI_JOB["progress"] = curr
+                _BATCH_AI_JOB["total"] = tot
+                _BATCH_AI_JOB["current_title"] = title
+
+            try:
+                res = batch_enrich_listings(
+                    limit=limit,
+                    only_missing=only_missing,
+                    custom_model=model,
+                    stop_event=stop_event,
+                    progress_callback=_prog
+                )
+                _BATCH_AI_JOB["last_result"] = res
+                _CACHED_LISTINGS_PAYLOAD = None
+            except Exception as e:
+                logger.error(f"Erreur batch IA worker : {e}")
+                _BATCH_AI_JOB["last_result"] = {"success": False, "error": str(e)}
+            finally:
+                _BATCH_AI_JOB["running"] = False
+
+        threading.Thread(target=_worker, daemon=True).start()
+        self._send_json({"success": True, "message": f"Traitement par lot démarré ({limit} annonces demandées)."})
+
+    def handle_get_ai_batch_status(self):
+        """Retourne l'état d'avancement du batch IA."""
+        global _BATCH_AI_JOB
+        started = _BATCH_AI_JOB.get("started_at")
+        elapsed = round(time.time() - started, 1) if started else 0
+        self._send_json({
+            "success": True,
+            "running": _BATCH_AI_JOB["running"],
+            "progress": _BATCH_AI_JOB["progress"],
+            "total": _BATCH_AI_JOB["total"],
+            "current_title": _BATCH_AI_JOB["current_title"],
+            "elapsed_seconds": elapsed,
+            "last_result": _BATCH_AI_JOB["last_result"]
+        })
+
+    def handle_post_ai_batch_cancel(self):
+        """Annule le traitement par lot en cours."""
+        global _BATCH_AI_JOB
+        if _BATCH_AI_JOB.get("stop_event"):
+            _BATCH_AI_JOB["stop_event"].set()
+        _BATCH_AI_JOB["running"] = False
+        _BATCH_AI_JOB["current_title"] = "Annulation demandée..."
+        self._send_json({"success": True, "message": "Arrêt du lot demandé."})
 
     def handle_post_ai_config(self):
         """Met à jour et sauvegarde la configuration de l'IA (prompts, presets, modèle)."""
@@ -465,6 +561,28 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 logger.warning(f"Impossible de charger l'historique des prix : {e}")
 
+            # Pré-chargement des enrichissements sémantiques IA persistés en DuckDB
+            ai_enrichments_by_listing: Dict[str, Dict[str, Any]] = {}
+            try:
+                ai_df = db.query("""
+                    SELECT listing_id, model_version, enriched_at, extracted_contacts_json, structured_sections_json
+                    FROM listing_ai_enrichment
+                """)
+                for _, a_row in ai_df.iterrows():
+                    al_id = str(a_row["listing_id"])
+                    c_json = a_row.get("extracted_contacts_json")
+                    s_json = a_row.get("structured_sections_json")
+                    contacts_list = json.loads(str(c_json)) if pd.notna(c_json) and str(c_json).strip() else []
+                    sections_list = json.loads(str(s_json)) if pd.notna(s_json) and str(s_json).strip() else []
+                    ai_enrichments_by_listing[al_id] = {
+                        "model": str(a_row.get("model_version") or "IA"),
+                        "enriched_at": str(a_row.get("enriched_at") or ""),
+                        "direct_contacts": contacts_list,
+                        "sections": sections_list
+                    }
+            except Exception as e:
+                logger.debug(f"Aucun cache IA chargé : {e}")
+
             listings = []
             now = datetime.now(timezone.utc)
 
@@ -490,6 +608,18 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 desc = re.sub(r"\[IMG:\s*https?://[^\]]+\]", "", desc).strip()
                 prop_type = str(row.get("property_type") or "").upper()
                 struct_desc = structure_description(desc, property_type=prop_type)
+                row_id = str(row.get("id"))
+                ai_cached = ai_enrichments_by_listing.get(row_id)
+                if ai_cached and (ai_cached.get("direct_contacts") or ai_cached.get("sections")):
+                    final_sections = ai_cached.get("sections", [])
+                    final_contacts = ai_cached.get("direct_contacts", [])
+                    is_ai_enriched = True
+                    ai_model_name = ai_cached.get("model", "IA")
+                else:
+                    final_sections = struct_desc.get("sections", [])
+                    final_contacts = struct_desc.get("direct_contacts", [])
+                    is_ai_enriched = False
+                    ai_model_name = None
                 is_dock = prop_type == "DOCK"
                 has_sea_view = bool(row.get("has_sea_view"))
 
@@ -901,9 +1031,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "image": img_url,
                     "images": images,
                     "description": desc,
-                    "structuredDescription": struct_desc.get("sections", []),
+                    "isAiEnriched": is_ai_enriched,
+                    "aiModelName": ai_model_name,
+                    "structuredDescription": final_sections,
                     "descriptionHighlights": struct_desc.get("key_highlights", []),
-                    "directContacts": struct_desc.get("direct_contacts", []),
+                    "directContacts": final_contacts,
                     "features": features,
                     "priceHistory": price_history,
                     "aiAnalysis": {

@@ -295,6 +295,69 @@ def _save_cached_enrichment(listing_id: str, model: str, input_hash: str,
         logger.warning(f"Erreur sauvegarde cache IA: {e}")
 
 
+def _sanitize_ai_sections(raw_sections: Any) -> List[Dict[str, Any]]:
+    """Nettoie et aplatit les rubriques retournées par les petits LLM pour garantir une liste d'items textuels."""
+    if not isinstance(raw_sections, list):
+        return []
+
+    clean_sections = []
+
+    def _extract_bullets_recursive(obj: Any) -> List[str]:
+        bullets = []
+        if isinstance(obj, str):
+            s = obj.strip()
+            if s and s.upper() not in ("COMMERCIAL", "RESIDENTIAL", "TERRAIN"):
+                bullets.append(s)
+        elif isinstance(obj, dict):
+            for k in ("title", "key", "name", "desc"):
+                val = obj.get(k)
+                if isinstance(val, str) and val.strip() and val.upper() not in ("COMMERCIAL", "RESIDENTIAL", "TERRAIN"):
+                    if not any(v in val for v in ("Bureaux", "Stationnement", "Implantation", "Extérieur")):
+                        bullets.append(val.strip())
+            for sub in obj.get("items", []):
+                bullets.extend(_extract_bullets_recursive(sub))
+        elif isinstance(obj, list):
+            for sub in obj:
+                bullets.extend(_extract_bullets_recursive(sub))
+        return bullets
+
+    for s in raw_sections:
+        if not isinstance(s, dict):
+            continue
+        title = str(s.get("title") or s.get("key") or "Détails").strip()
+        sub_items = s.get("items", [])
+        has_nested = any(isinstance(it, dict) and any(kw in str(it.get("title") or it.get("key")) for kw in ("Bureaux", "Stationnement", "Logistique", "Extérieur", "Pièce", "Cadre")) for it in sub_items)
+
+        if has_nested:
+            for it in sub_items:
+                if isinstance(it, dict):
+                    it_title = str(it.get("title") or it.get("key") or title).strip()
+                    it_icon = str(it.get("icon") or s.get("icon") or "📌")
+                    it_bullets = []
+                    for b in it.get("items", []):
+                        it_bullets.extend(_extract_bullets_recursive(b))
+                    if not it_bullets and it_title:
+                        it_bullets = [it_title]
+                    clean_sections.append({
+                        "key": str(it.get("key") or "section").lower(),
+                        "title": it_title,
+                        "icon": it_icon if len(it_icon) <= 4 else "🏢",
+                        "items": [str(x) for x in it_bullets if str(x).strip()]
+                    })
+        else:
+            bullets = []
+            for b in sub_items:
+                bullets.extend(_extract_bullets_recursive(b))
+            clean_sections.append({
+                "key": str(s.get("key") or "section").lower(),
+                "title": title,
+                "icon": str(s.get("icon") or "📌") if len(str(s.get("icon") or "")) <= 4 else "📌",
+                "items": [str(x) for x in bullets if str(x).strip()]
+            })
+
+    return [cs for cs in clean_sections if cs.get("title") and (cs.get("items") or cs.get("title"))]
+
+
 def enrich_listing_with_ai(
     listing_data: Any,
     custom_prompt: Optional[str] = None,
@@ -308,7 +371,7 @@ def enrich_listing_with_ai(
     cfg = get_ai_config()
     model = custom_model or cfg.get("model", "qwen2.5:3b")
     system_prompt = custom_prompt or cfg.get("system_prompt", DEFAULT_SYSTEM_PROMPT)
-    timeout_sec = float(cfg.get("timeout_seconds", 30.0))
+    timeout_sec = float(cfg.get("timeout_seconds", 40.0))
 
     # Extraction des métadonnées d'entrée
     if isinstance(listing_data, dict):
@@ -359,10 +422,13 @@ def enrich_listing_with_ai(
     user_message = (
         f"Analyse l'annonce suivante et extrais les contacts et rubriques structurées en JSON :\n"
         f"{json.dumps(compact_payload, ensure_ascii=False, indent=2)}\n\n"
-        f"Format JSON attendu impérativement :\n"
+        f"Format JSON attendu impérativement (attention : 'items' DOIT être une simple liste de chaînes de texte, aucun objet imbriqué dans items) :\n"
         f"{{\n"
-        f'  "direct_contacts": [{{"name": "...", "phone": "+687 ...", "whatsapp": "687...", "email": null, "role": "Négociateur"}}],\n'
-        f'  "sections": [{{"key": "...", "title": "...", "icon": "...", "items": ["..."]}}]\n'
+        f'  "direct_contacts": [{{"name": "Manu", "phone": "+687 98.72.66", "whatsapp": "687987266", "email": null, "role": "Négociateur"}}],\n'
+        f'  "sections": [\n'
+        f'    {{"key": "bureaux", "title": "Bureaux & Espaces professionnels", "icon": "🏢", "items": ["3 bureaux indépendants", "Grande pièce de 30 m²"]}},\n'
+        f'    {{"key": "stationnement", "title": "Stationnement & Logistique", "icon": "🚗", "items": ["5 places de parking dont 2 couvertes", "Dock réserve de 45 m²"]}}\n'
+        f'  ]\n'
         f"}}"
     )
 
@@ -407,7 +473,9 @@ def enrich_listing_with_ai(
 
     if ollama_success:
         direct_contacts = ai_result.get("direct_contacts", [])
-        sections = ai_result.get("sections", [])
+        raw_sections = ai_result.get("sections", [])
+        sections = _sanitize_ai_sections(raw_sections)
+        ai_result["sections"] = sections
         tok_s = round((tokens_generated / (latency_ms / 1000.0)), 1) if latency_ms > 0 and tokens_generated > 0 else 0
         provider_used = f"Ollama ({model})"
         fallback_tier1 = False
@@ -548,4 +616,76 @@ def ask_ai_chat(listing_data: Any, question: str, custom_model: Optional[str] = 
         "latency_ms": latency_ms,
         "model": "Moteur Contextuel Tier-1",
         "source": "Tier-1 Fallback"
+    }
+
+
+def batch_enrich_listings(
+    limit: int = 20,
+    only_missing: bool = True,
+    custom_model: Optional[str] = None,
+    stop_event: Optional[Any] = None,
+    progress_callback: Optional[Any] = None
+) -> Dict[str, Any]:
+    """
+    Enrichit par lot les annonces enregistrées dans la base DuckDB.
+    Enregistre chaque résultat en cache dans listing_ai_enrichment.
+    """
+    import duckdb
+    if not DB_PATH.exists():
+        return {"success": False, "error": f"Base de données introuvable : {DB_PATH}"}
+
+    init_ai_cache_table()
+    con = duckdb.connect(str(DB_PATH), read_only=True)
+
+    where_parts = ["is_active = TRUE", "description IS NOT NULL", "length(trim(description)) > 10"]
+    if only_missing:
+        where_parts.append("id NOT IN (SELECT listing_id FROM listing_ai_enrichment WHERE extracted_contacts_json IS NOT NULL)")
+    where_clause = "WHERE " + " AND ".join(where_parts)
+
+    limit_clause = f"LIMIT {int(limit)}" if limit > 0 else ""
+    query = f"""
+        SELECT id, title, property_type, commune, quartier, price_xpf, description, agency_name
+        FROM listings
+        {where_clause}
+        ORDER BY scraped_at DESC
+        {limit_clause}
+    """
+    try:
+        df = con.execute(query).df()
+    except Exception as e:
+        con.close()
+        return {"success": False, "error": f"Erreur requête SQL : {e}"}
+    finally:
+        con.close()
+
+    total = len(df)
+    results = []
+    enriched_count = 0
+
+    for idx, row in df.iterrows():
+        if stop_event and stop_event.is_set():
+            break
+
+        item = row.to_dict()
+        if progress_callback:
+            progress_callback(enriched_count, total, f"Analyse : {item.get('title') or 'Annonce'}")
+
+        res = enrich_listing_with_ai(item, custom_model=custom_model, force_refresh=True)
+        results.append({
+            "id": item.get("id"),
+            "title": item.get("title"),
+            "provider_used": res.get("provider_used"),
+            "contacts_found": len(res.get("direct_contacts", [])),
+            "sections_found": len(res.get("sections", [])),
+            "latency_ms": res.get("latency_ms")
+        })
+        enriched_count += 1
+        if progress_callback:
+            progress_callback(enriched_count, total, f"Terminé : {item.get('title') or 'Annonce'}")
+
+    return {
+        "success": True,
+        "total_requested": limit,
+        "processed_count": enriched_count,
+        "results": results
     }

@@ -1411,6 +1411,86 @@
 
       </div>
 
+      <!-- ===================================================================== -->
+      <!-- SECTION: ANALYSE & STRUCTURATION IA PAR LOT (BATCH ENRICHMENT)        -->
+      <!-- ===================================================================== -->
+      <div class="p-6 rounded-2xl bg-gradient-to-br from-slate-900 via-indigo-950/40 to-slate-900 border border-sky-500/30 shadow-xl space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-800">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-sky-500 to-indigo-600 flex items-center justify-center text-white text-xl shadow-lg shadow-sky-500/20 shrink-0">
+              🚀
+            </div>
+            <div>
+              <h3 class="text-base font-bold text-white flex items-center gap-2">
+                <span>Analyse & Enrichissement par Lot (Batch)</span>
+                <span class="text-xs px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 font-semibold border border-sky-500/30">Traitement Massif</span>
+              </h3>
+              <p class="text-xs text-slate-400">
+                Lancez l'IA locale pour analyser en chaîne les annonces, isoler les contacts de négociateurs et ventiler les rubriques dans DuckDB.
+              </p>
+            </div>
+          </div>
+
+          <!-- Contrôles et boutons d'action -->
+          <div class="flex items-center gap-2 flex-wrap">
+            <div class="flex items-center gap-1.5 bg-slate-900 border border-slate-800 rounded-xl px-3 py-1.5 text-xs">
+              <label for="aiBatchLimitSelect" class="text-slate-400">Volume :</label>
+              <select id="aiBatchLimitSelect" class="bg-transparent text-white font-semibold focus:outline-none cursor-pointer">
+                <option value="10">10 annonces (~1 min)</option>
+                <option value="25" selected>25 annonces (~2.5 min)</option>
+                <option value="50">50 annonces (~5 min)</option>
+                <option value="100">100 annonces (~10 min)</option>
+                <option value="999999">Toutes les non-enrichies</option>
+              </select>
+            </div>
+
+            <button onclick="startAiBatch()" id="btnStartAiBatch" class="px-4 py-2 rounded-xl bg-gradient-to-r from-sky-500 to-indigo-600 hover:from-sky-400 hover:to-indigo-500 text-white text-xs font-bold shadow-lg shadow-sky-500/20 flex items-center gap-2 transition-all cursor-pointer">
+              <span>▶ Démarrer le Lot</span>
+            </button>
+
+            <button onclick="cancelAiBatch()" id="btnCancelAiBatch" class="hidden px-3.5 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/80 border border-rose-500/50 text-rose-200 text-xs font-bold transition-all cursor-pointer flex items-center gap-1.5">
+              <span>⏹ Arrêter</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Options secondaires -->
+        <div class="flex items-center justify-between text-xs flex-wrap gap-2 text-slate-300">
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" id="aiBatchOnlyMissingCheckbox" checked class="w-4 h-4 rounded bg-slate-900 border-slate-700 text-sky-500 focus:ring-0">
+            <span>Traiter uniquement les annonces qui n'ont pas encore été enrichies par l'IA</span>
+          </label>
+          <div class="text-[11px] text-slate-400" id="aiBatchSummaryText">
+            Modèle sélectionné : <strong class="text-purple-300 font-mono" id="aiBatchActiveModelLabel">qwen2.5:1.5b</strong> • Mode Éco AVX2 4 Threads (Zéro surchauffe)
+          </div>
+        </div>
+
+        <!-- Conteneur Progression en temps réel -->
+        <div id="aiBatchProgressContainer" class="hidden p-4 rounded-xl bg-slate-950/80 border border-slate-800 space-y-3">
+          <div class="flex items-center justify-between text-xs">
+            <div class="flex items-center gap-2">
+              <span class="w-2.5 h-2.5 rounded-full bg-sky-400 animate-ping" id="aiBatchPulse"></span>
+              <strong class="text-white" id="aiBatchStatusLabel">Traitement en cours...</strong>
+              <span class="text-slate-400 font-mono text-[11px]" id="aiBatchElapsedLabel">(0s)</span>
+            </div>
+            <div class="text-right">
+              <span class="font-bold text-sky-300 text-sm" id="aiBatchPctLabel">0%</span>
+              <span class="text-slate-400 text-xs font-mono ml-1" id="aiBatchCountLabel">(0 / 25)</span>
+            </div>
+          </div>
+
+          <!-- Barre de progression -->
+          <div class="w-full bg-slate-800 rounded-full h-2.5 overflow-hidden">
+            <div id="aiBatchProgressBar" class="h-2.5 bg-gradient-to-r from-sky-500 to-indigo-500 rounded-full transition-all duration-300" style="width: 0%"></div>
+          </div>
+
+          <div class="flex items-center justify-between text-[11px] text-slate-400 truncate">
+            <span class="truncate">Statut : <strong class="text-slate-200" id="aiBatchCurrentItemTitle">Initialisation du worker...</strong></span>
+            <span class="shrink-0 text-emerald-400 font-medium ml-2" id="aiBatchLiveStats">Persistance DuckDB active</span>
+          </div>
+        </div>
+      </div>
+
       <!-- SECTION CENTRALE : BANC D'ESSAI & PLAYGROUND INTERACTIF -->
       <div class="p-6 rounded-2xl bg-[var(--card)] border border-[var(--border)] shadow-xl space-y-5">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
@@ -3265,6 +3345,11 @@
                   ${categoryTag}
                   ${roomBadge}
                   ${furnishedBadge}
+                  ${item.isAiEnriched ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/30 text-purple-200 border border-purple-400/40 backdrop-blur-md shadow-sm flex items-center gap-1" title="Annonce analysée et structurée par l'IA locale (${item.aiModelName || 'Qwen 2.5'})">
+                      🤖 IA
+                    </span>
+                  ` : ''}
                   ${item.precisionBadge ? `
                     <span class="px-1.5 py-0.5 rounded text-[10px] font-bold border backdrop-blur-md shadow-md ${item.precisionBadgeClass || 'border-slate-600/40 text-slate-300 bg-slate-800/40'}" title="${item.precisionDetail || ''}">
                       ${item.precisionBadge}
@@ -3727,18 +3812,30 @@
           <!-- DESCRIPTION DU BIEN STRUCTURÉE ET TRANSPARENTE -->
           <div class="space-y-3">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div class="flex items-center gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-base">📝</span>
                 <h4 class="text-sm font-bold text-white">Descriptif & Caractéristiques du bien</h4>
+                ${item.isAiEnriched ? `
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1" title="Structuré sémantiquement par IA locale">
+                    <span>🤖</span> Enrichi IA (${item.aiModelName || 'Qwen 2.5'})
+                  </span>
+                ` : ''}
               </div>
-              <!-- Double-Vue Toggle -->
-              <div class="inline-flex p-1 rounded-xl bg-slate-950/80 border border-slate-800 self-start sm:self-auto">
-                <button id="btnDescStructured_${item.id}" onclick="toggleDescriptionView('${item.id}', 'structured')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-500/50 shadow-sm transition-all flex items-center gap-1.5">
-                  <span>✨</span> Fiche Structurée
+              <div class="flex items-center gap-2 flex-wrap">
+                <!-- Bouton 1-clic IA Enrichissement -->
+                <button id="btnAiEnrichModal_${item.id}" onclick="triggerAiEnrichModal('${item.id}')" class="px-2.5 py-1 rounded-lg text-xs font-semibold ${item.isAiEnriched ? 'text-purple-300 hover:text-white bg-purple-950/40 hover:bg-purple-900/60 border border-purple-500/40' : 'text-sky-300 hover:text-white bg-gradient-to-r from-purple-600/30 to-sky-600/30 hover:from-purple-600/50 hover:to-sky-600/50 border border-purple-500/50'} shadow-sm transition-all flex items-center gap-1.5 cursor-pointer" title="${item.isAiEnriched ? 'Ré-exécuter l\'analyse sémantique IA pour mettre à jour les contacts et rubriques' : 'Analyser et structurer cette annonce avec l\'IA locale'}">
+                  <span>${item.isAiEnriched ? '🔄' : '✨'}</span>
+                  <span>${item.isAiEnriched ? 'Ré-analyser IA' : 'Analyser avec l\'IA'}</span>
                 </button>
-                <button id="btnDescRaw_${item.id}" onclick="toggleDescriptionView('${item.id}', 'raw')" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/60 transition-all flex items-center gap-1.5">
-                  <span>📄</span> Texte Brut
-                </button>
+                <!-- Double-Vue Toggle -->
+                <div class="inline-flex p-1 rounded-xl bg-slate-950/80 border border-slate-800 self-start sm:self-auto">
+                  <button id="btnDescStructured_${item.id}" onclick="toggleDescriptionView('${item.id}', 'structured')" class="px-2.5 py-1 rounded-lg text-xs font-bold text-sky-300 bg-sky-950/80 border border-sky-500/50 shadow-sm transition-all flex items-center gap-1.5">
+                    <span>✨</span> Fiche Structurée
+                  </button>
+                  <button id="btnDescRaw_${item.id}" onclick="toggleDescriptionView('${item.id}', 'raw')" class="px-2.5 py-1 rounded-lg text-xs font-semibold text-slate-400 hover:text-white bg-slate-800/60 transition-all flex items-center gap-1.5">
+                    <span>📄</span> Texte Brut
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -5089,6 +5186,15 @@
         console.warn('Erreur config IA:', e);
       }
       await pingAiEngine();
+      try {
+        const base = getApiBase();
+        const bResp = await fetch(`${base}/api/ai/batch/status`);
+        if (bResp.ok) {
+          const bData = await bResp.json();
+          if (bData.running) pollAiBatchStatus();
+        }
+      } catch (e) {}
+
       const curText = document.getElementById('aiInputRawText');
       if (curText && !curText.value.trim()) {
         loadFamousCase('pk6_manu');
@@ -5120,7 +5226,11 @@
       if (prov && cfg.provider) prov.value = cfg.provider;
 
       const mod = document.getElementById('aiModelSelect');
-      if (mod && cfg.model) mod.value = cfg.model;
+      if (mod && cfg.model) {
+        mod.value = cfg.model;
+        const bModelLbl = document.getElementById('aiBatchActiveModelLabel');
+        if (bModelLbl) bModelLbl.textContent = cfg.model;
+      }
 
       const temp = document.getElementById('aiTempSlider');
       const tempLbl = document.getElementById('aiTempLabel');
@@ -5165,6 +5275,8 @@
 
     function onAiModelChange() {
       const m = document.getElementById('aiModelSelect').value;
+      const bModelLbl = document.getElementById('aiBatchActiveModelLabel');
+      if (bModelLbl) bModelLbl.textContent = m;
       showNotificationToast('Modèle LLM', `Modèle sélectionné : ${m}`, 'info', 3000);
     }
 
@@ -5549,6 +5661,212 @@
         }
       } catch (e) {
         showNotificationToast('Erreur', 'Impossible de vider le cache : ' + e, 'error');
+      }
+    }
+
+    // =========================================================================
+    // TRAITEMENT PAR LOT IA (BATCH ENRICHMENT) & ENRICHISSEMENT MODALE (1-CLIC)
+    // =========================================================================
+    let aiBatchPollTimer = null;
+
+    async function startAiBatch() {
+      const limit = parseInt(document.getElementById('aiBatchLimitSelect').value) || 25;
+      const onlyMissing = document.getElementById('aiBatchOnlyMissingCheckbox').checked;
+      const model = document.getElementById('aiModelSelect') ? document.getElementById('aiModelSelect').value : null;
+
+      const btnStart = document.getElementById('btnStartAiBatch');
+      const btnCancel = document.getElementById('btnCancelAiBatch');
+      const progBox = document.getElementById('aiBatchProgressContainer');
+      const pBar = document.getElementById('aiBatchProgressBar');
+      const pPct = document.getElementById('aiBatchPctLabel');
+      const pCount = document.getElementById('aiBatchCountLabel');
+      const pTitle = document.getElementById('aiBatchCurrentItemTitle');
+      const pStatus = document.getElementById('aiBatchStatusLabel');
+      const pElapsed = document.getElementById('aiBatchElapsedLabel');
+
+      if (btnStart) btnStart.classList.add('hidden');
+      if (btnCancel) btnCancel.classList.remove('hidden');
+      if (progBox) progBox.classList.remove('hidden');
+
+      if (pBar) pBar.style.width = '0%';
+      if (pPct) pPct.textContent = '0%';
+      if (pCount) pCount.textContent = `(0 / ${limit === 999999 ? 'Toutes' : limit})`;
+      if (pTitle) pTitle.textContent = 'Démarrage du worker IA en arrière-plan...';
+      if (pStatus) pStatus.textContent = 'Traitement en cours...';
+      if (pElapsed) pElapsed.textContent = '(0s)';
+
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/batch/start`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            limit: limit,
+            only_missing: onlyMissing,
+            model: model
+          })
+        });
+        const res = await resp.json();
+        if (res.success) {
+          showNotificationToast("Traitement par lot démarré", `Analyse de ${limit === 999999 ? 'toutes les' : limit} annonce(s) lancée en tâche de fond.`, "info");
+          pollAiBatchStatus();
+        } else {
+          showNotificationToast("Attention", res.error || "Impossible de démarrer le lot.", "error");
+          resetAiBatchUI();
+        }
+      } catch (e) {
+        showNotificationToast("Erreur", "Impossible de contacter l'API Sentinel : " + e, "error");
+        resetAiBatchUI();
+      }
+    }
+
+    function pollAiBatchStatus() {
+      if (aiBatchPollTimer) clearInterval(aiBatchPollTimer);
+
+      aiBatchPollTimer = setInterval(async () => {
+        try {
+          const base = getApiBase();
+          const resp = await fetch(`${base}/api/ai/batch/status`);
+          if (!resp.ok) return;
+          const data = await resp.json();
+
+          const progBox = document.getElementById('aiBatchProgressContainer');
+          const pBar = document.getElementById('aiBatchProgressBar');
+          const pPct = document.getElementById('aiBatchPctLabel');
+          const pCount = document.getElementById('aiBatchCountLabel');
+          const pTitle = document.getElementById('aiBatchCurrentItemTitle');
+          const pStatus = document.getElementById('aiBatchStatusLabel');
+          const pElapsed = document.getElementById('aiBatchElapsedLabel');
+          const btnStart = document.getElementById('btnStartAiBatch');
+          const btnCancel = document.getElementById('btnCancelAiBatch');
+
+          if (data.running) {
+            if (progBox) progBox.classList.remove('hidden');
+            if (btnStart) btnStart.classList.add('hidden');
+            if (btnCancel) btnCancel.classList.remove('hidden');
+
+            const curr = data.progress || 0;
+            const tot = data.total || 1;
+            const pct = Math.min(100, Math.round((curr / tot) * 100));
+
+            if (pBar) pBar.style.width = `${pct}%`;
+            if (pPct) pPct.textContent = `${pct}%`;
+            if (pCount) pCount.textContent = `(${curr} / ${tot})`;
+            if (pTitle) pTitle.textContent = data.current_title || 'En cours...';
+            if (pElapsed) pElapsed.textContent = `(${data.elapsed_seconds}s)`;
+          } else {
+            clearInterval(aiBatchPollTimer);
+            aiBatchPollTimer = null;
+            if (btnStart) btnStart.classList.remove('hidden');
+            if (btnCancel) btnCancel.classList.add('hidden');
+
+            if (data.last_result) {
+              const res = data.last_result;
+              const count = res.processed_count || 0;
+              if (pBar) pBar.style.width = '100%';
+              if (pPct) pPct.textContent = '100%';
+              if (pStatus) pStatus.textContent = 'Lot terminé avec succès !';
+              if (pTitle) pTitle.textContent = `${count} annonce(s) analysée(s) et sauvegardée(s) en base DuckDB.`;
+
+              showNotificationToast(
+                "Analyse par lot terminée",
+                `${count} annonce(s) enrichie(s) par l'IA locale. Les fiches et contacts sont immédiatement à jour !`,
+                "success"
+              );
+
+              // Recharger discrètement les annonces pour afficher les nouveaux enrichissements
+              loadLiveBackendData();
+              const cCount = document.getElementById('aiCacheCount');
+              if (cCount) {
+                const cur = parseInt(cCount.textContent) || 0;
+                cCount.textContent = cur + count;
+              }
+            }
+          }
+        } catch (e) {
+          console.warn("Erreur polling batch IA:", e);
+        }
+      }, 1200);
+    }
+
+    async function cancelAiBatch() {
+      try {
+        const base = getApiBase();
+        const resp = await fetch(`${base}/api/ai/batch/cancel`, { method: 'POST' });
+        const res = await resp.json();
+        showNotificationToast("Arrêt demandé", res.message || "Annulation du traitement...", "info");
+      } catch (e) {
+        console.warn("Erreur annulation batch:", e);
+      }
+    }
+
+    function resetAiBatchUI() {
+      if (aiBatchPollTimer) {
+        clearInterval(aiBatchPollTimer);
+        aiBatchPollTimer = null;
+      }
+      const btnStart = document.getElementById('btnStartAiBatch');
+      const btnCancel = document.getElementById('btnCancelAiBatch');
+      if (btnStart) btnStart.classList.remove('hidden');
+      if (btnCancel) btnCancel.classList.add('hidden');
+    }
+
+    async function triggerAiEnrichModal(listingId) {
+      const btn = document.getElementById(`btnAiEnrichModal_${listingId}`);
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<span>⏳</span><span>Analyse IA en cours...</span>`;
+      }
+
+      try {
+        const base = getApiBase();
+        const model = document.getElementById('aiModelSelect') ? document.getElementById('aiModelSelect').value : null;
+        const resp = await fetch(`${base}/api/ai/enrich`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: listingId, model: model, force_refresh: true })
+        });
+
+        if (resp.ok) {
+          const res = await resp.json();
+          const d = res.data;
+
+          // Mettre à jour l'élément localement dans listingsData
+          const item = listingsData.find(x => x.id === listingId);
+          if (item) {
+            item.isAiEnriched = true;
+            item.aiModelName = d.model || d.provider_used || 'Qwen 2.5';
+            item.directContacts = d.direct_contacts || [];
+            item.structuredDescription = d.sections || [];
+          }
+
+          showNotificationToast(
+            "Analyse IA Terminée",
+            `Annonce analysée en ${d.latency_ms} ms (${d.direct_contacts.length} contact(s), ${d.sections.length} rubrique(s)). Fiche mise à jour !`,
+            "success"
+          );
+
+          // Rafraîchir la vue de la modale ouverte
+          openDetailModal(listingId);
+
+          const cCount = document.getElementById('aiCacheCount');
+          if (cCount) {
+            const cur = parseInt(cCount.textContent) || 0;
+            cCount.textContent = cur + 1;
+          }
+        } else {
+          showNotificationToast("Erreur", "L'analyse IA n'a pas pu aboutir.", "error");
+          if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<span>✨</span><span>Réessayer IA</span>`;
+          }
+        }
+      } catch (e) {
+        showNotificationToast("Erreur", "Impossible de contacter l'IA : " + e, "error");
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = `<span>✨</span><span>Réessayer IA</span>`;
+        }
       }
     }
 
