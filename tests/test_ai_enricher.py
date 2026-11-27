@@ -473,5 +473,67 @@ def test_batch_enrich_listings_force_all_rescan():
     assert progress_steps[-1] == (5, 5)
 
 
+def test_v4_canonical_invariance_dedup_and_specs():
+    """
+    Valide la refonte v4 (Gabarit Canonique Invariant) sur des cas réels de la base NC :
+    - Suppression des accroches commerciales ('Découvrez', 'En exclusivité') et sous-titres vides ('Caractéristiques du bien').
+    - Déduplication intelligente ('Grand séjour' + 'Séjour' -> 'Grand séjour').
+    - Classement strict ('Possibilité de garer une voiture...' -> stationnement_annexes ; 'rez de jardin de 80 m²' -> cadre_vie).
+    - Garde-fou anti faux-positif highlights ('rez de jardin de 80 m²' ne produit pas 'Jardin ~80 m²').
+    - Hygiène stricte des tags de niveau (pas de '(À l'étage)' sur 'Disponible tout de suite').
+    - Extraction complète des technical_specs (charges, terrasse, surface habitable, étage, parking).
+    """
+    from src.processing.description_structurer import structure_description, extract_technical_specs
+
+    raw_f4_tanamera = (
+        "F4 — MAGENTA — RESIDENCE TANAMERA\n"
+        "Découvrez ce bel appartement F4 de 95.12 m² habitables, à Magenta.\n"
+        "Caractéristiques du bien\n"
+        "- Grand séjour\n"
+        "- Séjour\n"
+        "- Cuisine équipée\n"
+        "- Suite parentale climatisée avec volet roulant électrique, placard et salle de bain\n"
+        "- Terrasse de 17 m²\n"
+        "- Ce bien est complété par un cellier et 2 places de parking privatives.\n"
+        "Loyer hors charges : 160.000f\n"
+        "Charges (hors eau et électricité) : 15.000f\n"
+        "Loyer charges comprises : 175.000f"
+    )
+    st1 = structure_description(raw_f4_tanamera, property_type="APPARTEMENT")
+    sec1 = {s["key"]: s["items"] for s in st1["sections"]}
+    all1 = " | ".join(it for items in sec1.values() for it in items).lower()
+
+    assert "caractéristiques du bien" not in all1
+    assert "découvrez" not in all1
+    assert not any(it.strip().lower() == "séjour" for it in sec1.get("pieces_de_vie", []))
+    assert any("grand séjour" in it.lower() for it in sec1.get("pieces_de_vie", []))
+    assert st1["technical_specs"]["charges_mensuelles_xpf"] == 15000
+    assert st1["technical_specs"]["surface_terrasse_m2"] == 17.0
+    assert st1["technical_specs"]["surface_habitable_m2"] == 95.12
+    assert "2 places de parking" in (st1["technical_specs"]["parking_detail"] or "").lower()
+
+    raw_f3_rdj = (
+        "EN EXCLUSIVITÉ – F3 DUPLEX AVEC BEL ESPACE EXTÉRIEUR À MAGENTA STADE\n\n"
+        "Découvrez ce spacieux appartement F3 en rez de jardin de 80m2.\n"
+        "Son véritable atout : un agréable espace extérieur privatif d'environ 45 m².\n"
+        "À l'étage : une chambre de 17 m² avec dressing.\n"
+        "Disponible tout de suite.\n"
+        "Possibilité de garer une voiture et abri pour véhicule deux roues.\n"
+        "Charges de copropriété : seulement 6.900 F CFP/ mois"
+    )
+    st2 = structure_description(raw_f3_rdj, property_type="APPARTEMENT")
+    sec2 = {s["key"]: s["items"] for s in st2["sections"]}
+
+    assert not any("80" in h and "jardin" in h.lower() for h in st2["key_highlights"])
+    assert any("garer une voiture" in it.lower() for it in sec2.get("stationnement_annexes", []))
+    assert not any("garer une voiture" in it.lower() for it in sec2.get("cadre_vie", []))
+    assert any("80 m²" in it for it in sec2.get("cadre_vie", []))
+    assert any(it == "Disponible tout de suite" for it in sec2.get("conditions_modalites", []))
+    assert not any("(à l'étage)" in it.lower() for it in sec2.get("conditions_modalites", []))
+    assert st2["technical_specs"]["charges_mensuelles_xpf"] == 6900
+    assert st2["technical_specs"]["etage"] == "Rez-de-jardin"
+
+
+
 
 

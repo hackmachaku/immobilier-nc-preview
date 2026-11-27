@@ -32,6 +32,8 @@ from src.processing.description_structurer import (
     strip_technical_noise,
     synthesize_atomic_bullet,
     is_valid_person_name,
+    sanitize_section_bullets,
+    extract_technical_specs,
     CATEGORY_DEFINITIONS,
     STOP_NAMES,
 )
@@ -56,25 +58,35 @@ HARDWARE_SPECS = {
 }
 
 DEFAULT_SYSTEM_PROMPT = (
-    "Tu es le moteur d'analyse immobilière de référence en Nouvelle-Calédonie (Sentinel ImmoNC).\n"
-    "Analyse l'annonce et réponds EXCLUSIVEMENT en JSON strict et 100 % en FRANÇAIS (aucun mot anglais comme 'kitchen' ou 'bedroom').\n\n"
-    "1. CONTACTS & NÉGOCIATEURS ('direct_contacts') :\n"
-    "- Négociateur nommé (ex: 'Céline : 73.06.00', 'Stéphane au 78 61 30', 'Manu 98.72.66') -> name=Prénom/Nom, role='Négociateur', phone=numéro.\n"
-    "- Mention 'contactez l'agence au XX.XX.XX' sans prénom -> name=nom de l'agence (champ 'agency'), role='Agence', phone=numéro.\n"
-    "- Aucun contact dans le texte -> []. ZÉRO invention.\n\n"
-    "2. SPÉCIFICATIONS TECHNIQUES ('technical_specs') :\n"
-    "- charges_mensuelles_xpf (entier XPF de charges de copropriété ou null ; ne jamais extraire un loyer hors charges), etage (texte ou null), has_elevator (bool ou null), parking_detail (texte ou null), surface_terrasse_m2 (flottant ou null), standing (texte ou null).\n\n"
-    "3. RUBRIQUES NORMALISÉES ('rubriques') :\n"
-    "Décompose les phrases complexes en puces nominales atomiques courtes (1 fait par puce, commençant par une majuscule, en conservant le niveau '(RDC)' ou '(À l'étage)' si mentionné).\n"
-    "RÈGLE D'OR : Ne coupe JAMAIS une surface ou un détail de son nom (écris 'Terrasse couverte de 15 m²' et JAMAIS '15m²' seul ; écris 'Terrain clos de 4 ares avec piscine' et JAMAIS '4 ares' seul ; conserve '2 chambres avec placards dont 1 avec salle de bains et WC').\n"
-    "- 'cadre_vie' : Type de bien, typologie (F2, F3, F4, F5...), surface habitable (m²), quartier, environnement (calme, proche commodités), résidence, étage.\n"
-    "- 'services_residence' : Ascenseur, sécurité, vidéosurveillance, gardien, salle de sport, commerces de l'immeuble.\n"
-    "- 'pieces_de_vie' : Séjour, salon, salle à manger, cuisine équipée, buanderie.\n"
-    "- 'espace_nuit' : Chambres (avec placards/dressing), bureau, salles de bain/eau (avec détails), WC — OU surfaces de bureaux, pièce principale et sanitaires si bien commercial.\n"
-    "- 'exterieurs' : Terrain (en ares ou m²), terrasse/varangue (avec m²), jardin, piscine, vue.\n"
-    "- 'stationnement_annexes' : Garage fermé (avec buanderie), parking couvert/sécurisé, carport, cellier, box, dock/réserve.\n"
-    "- 'prestations_complementaires' : Climatisation globale, système d'alarme, chauffe-eau solaire, panneaux photovoltaïques, volets roulants, fibre, portail électrique, groupe électrogène.\n"
-    "- 'conditions_modalites' : Prix de vente, loyer, charges de copropriété, dépôt de garantie, modalités."
+    "Tu es le moteur d'intelligence sémantique de référence pour l'immobilier en Nouvelle-Calédonie (Sentinel ImmoNC — Gabarit Canonique v4).\n"
+    "Ta mission : transformer N'IMPORTE QUELLE annonce brute en une fiche structurée, rigoureusement identique d'une annonce à l'autre, "
+    "sans AUCUNE perte d'information factuelle et sans AUCUNE invention. Réponds EXCLUSIVEMENT en JSON strict et 100 % en FRANÇAIS.\n\n"
+    "1. CONTACTS DIRECTS ('direct_contacts') :\n"
+    "- Négociateur nommé (ex: 'Céline : 73.06.00', 'Stéphane au 78 61 30', 'Laurent NGUYEN au 289.888') -> name=Prénom/Nom, role='Négociateur', phone=numéro NC à 6 chiffres.\n"
+    "- Agence uniquement ('contactez l'agence au XX.XX.XX') -> name=nom de l'agence (champ 'agency'), role='Agence', phone=numéro.\n"
+    "- Aucun contact explicite dans le texte -> []. ZÉRO hallucination, ne jamais inventer un prénom ou un numéro.\n\n"
+    "2. SPÉCIFICATIONS TECHNIQUES QUANTIFIÉES ('technical_specs') :\n"
+    "- surface_habitable_m2 (flottant m² ou null), surface_terrain_m2 (flottant m² en convertissant 1 are = 100 m², ou null), surface_terrasse_m2 (flottant m² ou null).\n"
+    "- charges_mensuelles_xpf (entier XPF de charges mensuelles/copropriété ou null ; INTERDICTION d'extraire un loyer 'hors charges').\n"
+    "- etage (ex: 'Rez-de-chaussée', 'Rez-de-jardin', '2ème étage', 'Dernier étage', ou null), has_elevator (true/false/null).\n"
+    "- parking_detail (ex: '2 places de parking privatives', 'Garage fermé', 'Carport', ou null), standing (ex: 'Bon standing', 'Haut standing', ou null).\n"
+    "- has_air_conditioning (bool), has_pool (bool), has_sea_view (bool).\n\n"
+    "3. CLASSEMENT STRICT EN 8 RUBRIQUES CANONIQUES INVARIANTES ('rubriques') :\n"
+    "RÈGLES IMPÉRATIVES DE MISE EN FORME :\n"
+    "- 1 fait concret par puce, style nominal court commençant par une majuscule (ex: 'Cuisine équipée avec îlot central', 'Terrasse couverte de 17 m²').\n"
+    "- ZÉRO langage publicitaire : SUPPRIMER 'Découvrez ce bel...', 'En exclusivité', 'Coup de cœur', 'Vous séduira par...', 'Idéal pour profiter...', 'complète ce bien', ainsi que les sous-titres vides ('Caractéristiques du bien', 'Description').\n"
+    "- ZÉRO doublon : ne jamais écrire 'Séjour' et 'Grand séjour' séparément ; regrouper en une seule puce riche.\n"
+    "- ZÉRO perte de chiffre : ne JAMAIS séparer une surface ou un montant de son libellé ('Terrasse couverte de 15 m²', jamais '15 m²' seul).\n"
+    "- Niveaux '(RDC)' / '(À l'étage)' UNIQUEMENT sur les pièces intérieures (pièces de vie, espace nuit, garage/cellier), JAMAIS sur le cadre de vie ni les modalités.\n\n"
+    "TABLE DE CLASSEMENT INVARIANTE (CHAQUE INFORMATION DOIT TOUJOURS ALLER DANS LA MÊME RUBRIQUE) :\n"
+    "- 'cadre_vie' : Identité globale du bien (type, F1-F6, duplex, surface habitable m²), quartier/commune, résidence, calme, proximité écoles/commerces/plages, étage global. (Un 'appartement F3 en rez-de-jardin de 80 m²' va ICI, JAMAIS dans exterieurs ; le parking ne va JAMAIS ici).\n"
+    "- 'services_residence' : Ascenseur, résidence sécurisée, digicode/interphone, vidéosurveillance, gardien, salle de sport/fitness, piscine commune, commerces de l'immeuble.\n"
+    "- 'pieces_de_vie' : Séjour, salon, salle à manger, cuisine (équipée/aménagée/ouverte/îlot), buanderie intérieure.\n"
+    "- 'espace_nuit' : Chambres (avec m², placards, dressing, clim, volets), suite parentale, bureau, salles de bain / salles d'eau, WC séparés — OU bureaux, pièce principale, plateau, open-space et sanitaires si bien commercial/professionnel.\n"
+    "- 'exterieurs' : Terrasse/varangue/deck/balcon (avec m²), jardin/jardinet privatif (ne JAMAIS confondre 'rez-de-jardin de 80 m²' avec un jardin de 80 m²), terrain (en ares/m²), piscine privative, pergola/faré, vue mer/lagon/dégagée.\n"
+    "- 'stationnement_annexes' : Places de parking (nombre, couvert/sécurisé/privatif), garage, carport, box, abri voiture/deux-roues, cellier, cave, dock, réserve, atelier, espace de rangement.\n"
+    "- 'prestations_complementaires' : Climatisation globale, volets roulants électriques/manuels, persiennes, chauffe-eau solaire, panneaux photovoltaïques, alarme, portail motorisé, visiophone, fibre, double vitrage, moustiquaires, fosse septique, citerne, groupe électrogène.\n"
+    "- 'conditions_modalites' : Prix de vente (FAI/net), loyer hors charges, charges mensuelles/copropriété, loyer charges comprises, dépôt de garantie/caution, disponibilité, bail, colocation acceptée/possible, meublé/non meublé."
 )
 
 
@@ -97,8 +109,8 @@ def get_ai_config() -> Dict[str, Any]:
         "system_prompt": DEFAULT_SYSTEM_PROMPT,
         "presets": {
             "standard": {
-                "name": "🎯 Standard Immo NC (Gabarit Invariant v3)",
-                "description": "Gabarit canonique à clés fixes : 100 % des annonces structurées dans le même ordre exact, sans anglicisme ni perte de détail.",
+                "name": "🎯 Standard Immo NC (Gabarit Canonique v4)",
+                "description": "Gabarit canonique v4 à clés fixes : 100 % des annonces classées exactement dans le même ordre, sans bruit marketing, sans doublon ni perte de détail, avec extraction complète des spécifications techniques.",
                 "temperature": 0.1,
                 "prompt": DEFAULT_SYSTEM_PROMPT
             },
@@ -645,7 +657,8 @@ def _sanitize_ai_sections(raw_sections: Any, raw_description: str = "", title: s
 
     final_canonical_sections: List[Dict[str, Any]] = []
     for k in ordered_keys:
-        items = categorized_items.get(k, [])
+        raw_items = categorized_items.get(k, [])
+        items = sanitize_section_bullets(k, raw_items)
         if items:
             sec_title, sec_icon = category_titles[k]
             final_canonical_sections.append({
@@ -660,137 +673,11 @@ def _sanitize_ai_sections(raw_sections: Any, raw_description: str = "", title: s
 
 def _sanitize_ai_technical_specs(raw_specs: Any, raw_description: str = "") -> Dict[str, Any]:
     """
-    Valide et ancre les spécifications techniques (Tier-2 IA ou Tier-1 déterministe).
-    Vérifie l'absence d'hallucinations numériques et applique les règles calédoniennes.
+    Valide et ancre les spécifications techniques (Tier-2 IA ou Tier-1 déterministe)
+    en déléguant au moteur unifié extract_technical_specs (zéro hallucination).
     """
-    import re
-    if not isinstance(raw_specs, dict):
-        raw_specs = {}
-
-    desc_clean = strip_technical_noise(fix_mojibake(raw_description or ""))
-    desc_lower = desc_clean.lower()
-
-    # 1. Charges de copropriété (XPF) — avec garde-fou anti-.00 et anti-'hors charges'
-    charges_raw = raw_specs.get("charges_mensuelles_xpf")
-    charges_val: Optional[int] = None
-    desc_digits = re.sub(r"[^\d]", "", desc_clean)
-    has_valid_charge_context = bool(re.search(r"(?<!hors\s)(?<!sans\s)(?<!toute\s)(?<!aucune\s)\bcharges?\b(?!\s*comprises|\s*incluses)", desc_lower))
-    if charges_raw is not None and has_valid_charge_context:
-        try:
-            raw_chg_str = re.sub(r"[.,]\d{1,2}\s*$", "", str(charges_raw).strip())
-            c_digits = re.sub(r"[^\d]", "", raw_chg_str)
-            if c_digits:
-                val = int(c_digits)
-                if 500 <= val <= 150_000 and c_digits in desc_digits:
-                    charges_val = val
-        except Exception:
-            charges_val = None
-    if charges_val is None and has_valid_charge_context:
-        m_chg = re.search(
-            r"(?<!hors\s)(?<!sans\s)(?<!toute\s)(?<!aucune\s)\bcharges?\s*(?:mensuelles?|de\s+copropri[eé]t[eé]|copro)\s*[:=\s]?\s*(\d{1,3}(?:[\s.]?\d{3})*|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|f\b|cfp|/mois)?",
-            desc_clean,
-            re.I
-        )
-        if not m_chg:
-            m_chg = re.search(
-                r"(?<!hors\s)(?<!sans\s)(?<!toute\s)(?<!aucune\s)\bcharges?\s*(?::|=|de|d['’]environ)\s*(\d{1,3}(?:[\s.]?\d{3})*|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|f\b|cfp)",
-                desc_clean,
-                re.I
-            )
-        if not m_chg:
-            m_chg = re.search(
-                r"(\d{1,3}(?:[\s.]?\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|f)\s*(?:/mois\s*)?de\s+charges?\b",
-                desc_clean,
-                re.I
-            )
-        if m_chg:
-            c_digs = re.sub(r"[^\d]", "", m_chg.group(1))
-            if c_digs and 500 <= int(c_digs) <= 150_000:
-                charges_val = int(c_digs)
-
-    # 2. Étage
-    etage_raw = raw_specs.get("etage")
-    etage_val: Optional[str] = None
-    if etage_raw and isinstance(etage_raw, str):
-        etage_clean = etage_raw.strip()
-        if any(k in etage_clean.lower() for k in ("étage", "etage", "rdc", "rez", "dernier")):
-            if any(k in desc_lower for k in ("étage", "etage", "rdc", "rez", "dernier")):
-                etage_val = etage_clean
-    if not etage_val:
-        m_et = re.search(r"\b(dernier\s+[eé]tage|\d+(?:[eè]me|er)?\s+[eé]tage|rdc|rez[- ]de[- ]chauss[eé]e)\b", desc_clean, re.I)
-        if m_et:
-            etage_val = m_et.group(1).capitalize()
-
-    # 3. Ascenseur
-    has_elevator: Optional[bool] = None
-    elev_raw = raw_specs.get("has_elevator")
-    if elev_raw is True and "ascenseur" in desc_lower:
-        has_elevator = True
-    elif elev_raw is False and "sans ascenseur" in desc_lower:
-        has_elevator = False
-    elif "ascenseur" in desc_lower and "sans ascenseur" not in desc_lower:
-        has_elevator = True
-    elif "sans ascenseur" in desc_lower:
-        has_elevator = False
-
-    # 4. Stationnement / Parking
-    parking_raw = raw_specs.get("parking_detail")
-    parking_val: Optional[str] = None
-    if parking_raw and isinstance(parking_raw, str):
-        p_clean = parking_raw.strip()
-        if any(k in p_clean.lower() for k in ("parking", "stationnement", "garage", "box", "carport", "place")):
-            if any(k in desc_lower for k in ("parking", "stationnement", "garage", "box", "carport", "place")):
-                parking_val = p_clean
-    if not parking_val:
-        if "carport" in desc_lower:
-            parking_val = "Carport"
-        elif "garage" in desc_lower or "box" in desc_lower:
-            parking_val = "Garage fermé"
-        elif "place de parking couverte" in desc_lower or "parking couvert" in desc_lower:
-            parking_val = "Place couverte sécurisée"
-        elif "parking" in desc_lower or "stationnement" in desc_lower:
-            m_park = re.search(r"(\d+)\s*(?:places?|parkings?|stationnements?)", desc_lower)
-            parking_val = f"{m_park.group(1)} places de parking" if m_park else "Parking"
-
-    # 5. Surface terrasse / varangue (m²)
-    ter_raw = raw_specs.get("surface_terrasse_m2")
-    ter_val: Optional[float] = None
-    if ter_raw is not None:
-        try:
-            val_t = float(str(ter_raw).replace(",", "."))
-            int_str = str(int(val_t))
-            if 1.0 <= val_t <= 500.0 and int_str in desc_digits and any(k in desc_lower for k in ("terrasse", "varangue", "deck", "balcon")):
-                ter_val = val_t
-        except Exception:
-            ter_val = None
-    if ter_val is None:
-        m_ter = re.search(r"(?:terrasse|varangue|deck)\s*(?:couverte)?\s*(?:de)?\s*(\d+(?:[,\.]\d+)?)\s*(?:m²|m2)", desc_clean, re.I)
-        if m_ter:
-            try:
-                ter_val = float(m_ter.group(1).replace(",", "."))
-            except ValueError:
-                pass
-
-    # 6. Standing
-    std_raw = raw_specs.get("standing")
-    std_val: Optional[str] = None
-    if std_raw and isinstance(std_raw, str):
-        if any(k in std_raw.lower() for k in ("standing", "prestige", "luxe", "récent")):
-            if any(k in desc_lower for k in ("standing", "prestige", "luxe", "récent")):
-                std_val = std_raw.strip()
-    if not std_val:
-        m_std = re.search(r"\b(bon\s+standing|haut\s+standing|grand\s+standing|prestige)\b", desc_clean, re.I)
-        if m_std:
-            std_val = m_std.group(1).capitalize()
-
-    return {
-        "charges_mensuelles_xpf": charges_val,
-        "etage": etage_val,
-        "has_elevator": has_elevator,
-        "parking_detail": parking_val,
-        "surface_terrasse_m2": ter_val,
-        "standing": std_val
-    }
+    desc_clean = fix_mojibake(raw_description or "")
+    return extract_technical_specs(desc_clean, raw_specs=raw_specs if isinstance(raw_specs, dict) else {})
 
 
 def enrich_listing_with_ai(
@@ -867,11 +754,16 @@ def enrich_listing_with_ai(
         f'    {{"name": "<nom_negociateur_ou_nom_agence>", "phone": "<telephone_reel>", "whatsapp": "<format_chiffres_sans_plus>", "email": null, "role": "Négociateur ou Agence"}}\n'
         f'  ],\n'
         f'  "technical_specs": {{\n'
+        f'    "surface_habitable_m2": null,\n'
+        f'    "surface_terrain_m2": null,\n'
+        f'    "surface_terrasse_m2": null,\n'
         f'    "charges_mensuelles_xpf": null,\n'
         f'    "etage": null,\n'
         f'    "has_elevator": null,\n'
         f'    "parking_detail": null,\n'
-        f'    "surface_terrasse_m2": null,\n'
+        f'    "has_air_conditioning": false,\n'
+        f'    "has_pool": false,\n'
+        f'    "has_sea_view": false,\n'
         f'    "standing": null\n'
         f'  }},\n'
         f'  "rubriques": {{\n'

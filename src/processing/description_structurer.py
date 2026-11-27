@@ -90,9 +90,15 @@ ORPHAN_COMPOSITION_HEADER_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# Phrases génériques / slogans sans valeur informative
+# Phrases génériques / slogans / sous-titres vides sans valeur informative
 BOILERPLATE_PATTERNS = [
-    re.compile(r'^\s*(?:description|descriptif(?:\s+du\s+bien)?|caract[ée]ristiques?|composition|d[ée]tails?|en\s+r[ée]sum[ée]|les\s+atouts)\s*:?\s*$', re.IGNORECASE),
+    re.compile(
+        r'^\s*(?:description(?:\s+du\s+bien)?|descriptif(?:\s+du\s+bien)?|caract[ée]ristiques?(?:\s+du\s+bien|\s+principales|\s+g[ée]n[ée]rales)?|'
+        r'composition(?:\s+du\s+bien)?|d[ée]tails?(?:\s+compl[ée]mentaires)?|en\s+r[ée]sum[ée]|(?:les\s+)?atouts?|les\s+plus|'
+        r'en\s+compl[ée]ment|infos?\s+compl[ée]mentaires?|informations?\s+compl[ée]mentaires?|prestations?(?:\s+compl[ée]mentaires)?|'
+        r'[ée]quipements?(?:\s+et\s+prestations)?|ext[ée]rieurs?|int[ée]rieur|points?\s+forts?|[àa]\s+d[ée]couvrir|en\s+exclusivit[ée])\s*[:!\-–—]*\s*$',
+        re.IGNORECASE
+    ),
     re.compile(r'^\s*(?:[àa]\s+saisir|[àa]\s+voir\s+absolument|coup\s+de\s+c[oœ]ur(?:\s+assur[ée])?|exclusivit[ée]|urgent|nouveaut[ée](?:\s+[àa]\s+la\s+vente)?|rare\s+sur\s+le\s+secteur|[àa]\s+visiter\s+sans\s+tarder|opportunit[ée]\s+[àa]\s+saisir|[àa]\s+vendre|[àa]\s+louer|prix\s+de\s+vente|vendu\s*!?|sous\s+compromis|sous\s+offre(?:\s+en\s+\d+\s+semaines?)?|remise\s+[àa]\s+la\s+vente|frais\s+d[\'’]agence\s+offerts?)\s*!*\s*$', re.IGNORECASE),
     re.compile(r'^\s*(?:il\s+comprend|elle\s+comprend|il\s+se\s+compose|elle\s+se\s+compose|comprenant|compos[ée]e?\s+de|comme\s+suit|le\s+logement\s+comprend|la\s+villa\s+comprend|la\s+maison\s+comprend|l[\'’]appartement\s+comprend)\s*:?\s*$', re.IGNORECASE),
     re.compile(r'^\s*(?:r[ée]f(?:[ée]rence)?\s*(?:annonce|mandat)?\s*[:\-]?\s*[A-Za-z0-9\-_/]+)\s*$', re.IGNORECASE),
@@ -271,7 +277,19 @@ def strip_technical_noise(raw_text: str) -> str:
     s = IMMONC_PROMO_BANNER_REGEX.sub('', s)
     s = IMMONC_PROMO_TEXT_REGEX.sub('', s)
     s = html.unescape(s)
-    s = re.sub(r'\bAnnonce\s+(Maison|Appartement|Terrain|Local|Immeuble|Dock|Autre)\s+None\b', r'Annonce \1', s, flags=re.IGNORECASE)
+    # Nettoyage des descriptions synthétiques immonc contenant 'None' ou des blocs Contact vides
+    s = re.sub(
+        r'\bAnnonce\s+(Maison|Villa|Appartement|Terrain|Local(?:\s+commercial)?|Immeuble|Dock|Bureau|Propri[ée]t[ée]|Colocation|Bien(?:\s+meubl[ée])?|Autre)\s+None\b',
+        r'\1',
+        s,
+        flags=re.IGNORECASE
+    )
+    s = re.sub(r'\bAnnonce\s+([A-ZÀ-Ÿ][a-zà-ÿ]+(?:\s+[A-Z0-9]+)?)\s+[àa]\s+None\s+', r'\1 à ', s, flags=re.IGNORECASE)
+    s = re.sub(r'\b[àa]\s+None\s+(?=[A-ZÀ-Ÿ])', 'à ', s)
+    s = re.sub(r'\bNone\b', '', s)
+    s = re.sub(r'\(\s*T[ée]l\s*:\s*0?\s*,?\s*Email\s*:\s*[^)]*\)', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bContact\s*:\s*\.', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'[ \t]{2,}', ' ', s)
     return s
 
 
@@ -313,7 +331,7 @@ def clean_line_typography(line: str) -> str:
 
 
 HEADER_TRANSACTION_PREFIX_REGEX = re.compile(
-    r'^\s*(?:(?:[àa]\s+louer|[àa]\s+vendre|en\s+location|en\s+vente|location\s+meubl[ée]e|location|vente|exclusivit[ée]|nouveaut[ée]|urgent|sous\s+offre)\b[\s\-–—:/|!]*)+',
+    r'^\s*(?:(?:[àa]\s+louer|[àa]\s+vendre|en\s+location|en\s+vente|location\s+meubl[ée]e|location|vente|en\s+exclusivit[ée]|exclusivit[ée]|nouveaut[ée]|urgent|sous\s+offre|coup\s+de\s+c[oœ]ur)\b[\s\-–—:/|!]*)+',
     re.IGNORECASE
 )
 
@@ -445,8 +463,17 @@ def format_bullet_uniform(text: str) -> str:
         s = re.sub(pat, repl, s, flags=re.IGNORECASE)
 
     s = re.sub(r'(\d)\s*(?:m2|m²)\b', r'\1 m²', s, flags=re.IGNORECASE)
-    s = re.sub(r'(\d[\d\s.]*\d{3})\s*F\b(?!\s*CFP)', r'\1 F CFP', s)
+    s = re.sub(r'(\d[\d\s.]*\d{3})\s*(?:F|Frs?)\b(?!\s*CFP)', r'\1 F CFP', s, flags=re.IGNORECASE)
+    # Nettoyage des accroches commerciales de tête résiduelles
+    s = PROMO_LEADIN_REGEX.sub('', s).strip()
+    # Nettoyage des queues verbales orphelines ("complète ce bien", "viennent compléter ce niveau")
+    s = TRAILING_COMPLETION_REGEX.sub('', s).strip()
+    s = MARKETING_TAIL_REGEX.sub('', s).strip()
+    s = GENERIC_LIFESTYLE_TAIL_REGEX.sub('', s).strip()
     s = re.sub(r'[,;:]+\s*$', '', s).strip()
+    # Retrait du point final isolé pour uniformité des puces courtes
+    if s.endswith('.') and not s.endswith('...') and len(s) < 120 and '.' not in s[:-1]:
+        s = s[:-1].strip()
 
     if s and s[0].isalpha() and s[0].islower():
         s = s[0].upper() + s[1:]
@@ -509,12 +536,27 @@ SEDUCTION_HOOK_REGEX = re.compile(
     re.IGNORECASE
 )
 
+# Accroches promotionnelles de début de phrase (supprime l'habillage marketing, conserve 100 % des faits)
+PROMO_LEADIN_REGEX = re.compile(
+    r'^\s*(?:'
+    r'(?:en\s+exclusivit[ée]|exclusivit[ée]|coup\s+de\s+c[oœ]ur|opportunit[ée]\s+(?:unique|rare|[àa]\s+saisir)|[àa]\s+ne\s+pas\s+manquer)\s*[\-–—:!,]*\s*'
+    r'|(?:venez\s+d[ée]couvrir|d[ée]couvrez|laissez[- ]vous\s+s[ée]duire\s+par|nous\s+vous\s+proposons|offrez\s+[àa]\s+votre\s+activit[ée]|profitez\s+de|ne\s+manquez\s+pas)\s+(?:ce|cet|cette|un|une|le|la|les)?\s*(?:tr[èe]s\s+)?(?:bel|beau|belle|charmant[e]?|spacieux|spacieuse|magnifique|superbe|joli[e]?|agr[ée]able|vaste|grand[e]?|rare|lumineux|lumineuse)?\s*'
+    r'|(?:les\s+atouts\s+de\s+ce\s+bien\s+ne\s+s[\'’]arr[êe]tent\s+pas\s+l[àa]\s*:\s*(?:il|elle)\s+dispose\s+(?:[ée]galement\s+)?(?:d[\'’]un[e]?\s+|de\s+|d[\'’])?)'
+    r'|(?:(?:son|le)\s+v[ée]ritable\s+atout\s*:\s*(?:un[e]?\s+)?(?:agr[ée]able\s+|bel\s+|beau\s+|belle\s+)?)'
+    r'|(?:[àa]\s+noter\s+que\s+(?:la\s+|le\s+|l[\'’])?)'
+    r'|(?:beaucoup\s+de\s+charme\s+et\s+de\s+beaux\s+volumes\s+pour\s+(?:ce|cet|cette)\s+)'
+    r'|(?:id[ée]alement\s+(?=situ[ée]e?\b))'
+    r')',
+    re.IGNORECASE
+)
+
 GENERIC_LIFESTYLE_TAIL_REGEX = re.compile(
-    r',?\s*(?:elle|il|cette\s+(?:villa|maison|propri[ée]t[ée])|cet\s+appartement|ce\s+bien)\s+'
-    r'(?:vous\s+)?(?:offre|propose|promet|assure|garantit|constituera|est)\s+'
+    r',?\s*(?:elle|il|cette\s+(?:villa|maison|propri[ée]t[ée])|cet\s+appartement|ce\s+bien)?\s*'
+    r'(?:vous\s+)?(?:offre|propose|promet|assure|garantit|constituera)\s+'
     r'(?:un\s+(?:cadre\s+de\s+vie|environnement|lieu\s+de\s+vie|confort\s+de\s+vie)\s+'
-    r'(?:tr[èe]s\s+)?(?:pratique|agr[ée]able|id[ée]al|paisible|privil[ée]gi[ée]|exceptionnel|unique|calme|chaleureux|convivial)'
-    r'(?:\s+et\s+(?:pratique|agr[ée]able|id[ée]al|paisible|privil[ée]gi[ée]|calme|chaleureux|convivial))?'
+    r'(?:tr[èe]s\s+)?(?:pratique|agr[ée]able|id[ée]al|paisible|privil[ée]gi[ée]|exceptionnel|unique|calme|chaleureux|convivial|fonctionnel)'
+    r'(?:\s+et\s+(?:pratique|agr[ée]able|id[ée]al|paisible|privil[ée]gi[ée]|calme|chaleureux|convivial|fonctionnel))?'
+    r'(?:,\s*avec\s+des\s+espaces\s+fonctionnels[^.]*)?'
     r'|id[ée]al[e]?\s+pour\s+(?:une\s+famille|un\s+couple|investir|habiter))\b[^.]*\.?$',
     re.IGNORECASE
 )
@@ -550,12 +592,15 @@ LEADING_NARRATIVE_WRAPPER_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# Pivot interne en milieu de phrase ("Appartement F2 situé à... comprenant : une cuisine...", "Traversant..., il se compose d'une cuisine...")
+# Pivot interne en milieu de phrase ("Appartement F2 situé à... comprenant : une cuisine...", "Bas de villa F2 avec jardin composé d'un coin cuisine...")
 INTERNAL_COMPOSITION_PIVOT_REGEX = re.compile(
-    r'^(?P<intro_head>[^:;]{12,180}?)'
+    r'^(?P<intro_head>[^:;]{10,220}?)'
     r'(?:,\s*|\s+)'
     r'(?:(?:il|elle|ce\s+bien|cet\s+appartement|cette\s+villa|cette\s+maison|le\s+logement)\s+)?'
-    r'(?:se\s+compose\s+(?:comme\s+suit\s*:?\s*|d[\'’]|de\s+)|est\s+compos[ée]e?\s+(?:comme\s+suit\s*:?\s*|d[\'’]|de\s+)|comprenant\s*(?:au\s+rdc\s*:?|à\s+l[\'’][ée]tage\s*:?)?\s*:?\s*|compos[ée]e?\s+comme\s+suit\s*:\s*)'
+    r'(?:se\s+compose\s+(?:comme\s+suit\s*:?\s*|d[\'’]|de\s+)|est\s+compos[ée]e?\s+(?:comme\s+suit\s*:?\s*|d[\'’]|de\s+)|'
+    r'compos[ée]e?\s+(?:comme\s+suit\s*:?\s*|d[\'’]|de\s+)|'
+    r'comprenant\s*(?:au\s+rdc\s*:?|à\s+l[\'’][ée]tage\s*:?|en\s+son\s+rez[- ]de[- ]chauss[ée]e\s*:?)?\s*:?\s*|'
+    r'comprend\s+(?:en\s+son\s+rez[- ]de[- ]chauss[ée]e\s+|au\s+rdc\s+|à\s+l[\'’][ée]tage\s+)?)'
     r'(?P<comp_tail>.+)$',
     re.IGNORECASE
 )
@@ -567,14 +612,14 @@ HALLWAY_DISTRIBUTOR_REGEX = re.compile(
 )
 
 TRAILING_COMPLETION_REGEX = re.compile(
-    r'\s+(?:(?:viennent|vient)\s+compl[ée]ter|compl[èe]tent?|parach[èe]vent?)\s+'
-    r'(?:ce\s+niveau|cet\s+[ée]tage|cet\s+ensemble|cette\s+villa|cette\s+maison|ce\s+bien|le\s+tout|l[\'’]ensemble)\.?$',
+    r'\s+(?:(?:viennent|vient)\s+compl[ée]ter|compl[èe]te(?:nt)?|parach[èe]ve(?:nt)?)\s+'
+    r'(?:ce\s+niveau|le\s+niveau|cet\s+[ée]tage|cet\s+ensemble|cette\s+villa|cette\s+maison|cette\s+propri[ée]t[ée]|la\s+propri[ée]t[ée]|cet\s+appartement|ce\s+bien|le\s+tout|l[\'’]ensemble)\.?$',
     re.IGNORECASE
 )
 
 # Queues participiales purement marketing en fin de puce (", idéale pour profiter de l'extérieur en toute saison")
 MARKETING_TAIL_REGEX = re.compile(
-    r',?\s+(?:id[ée]al[e]?\s+pour\s+(?:profiter|recevoir|vos\s+moments|partager)|parfait[e]?\s+pour\s+(?:profiter|vos\s+moments|recevoir)|permettant\s+de\s+profiter\s+pleinement)[^.]*\.?$',
+    r',?\s*(?:id[ée]al[e]?\s+pour\s+(?:profiter|recevoir|vos\s+moments|partager)|parfait[e]?\s+pour\s+(?:profiter|vos\s+moments|recevoir)|permettant\s+de\s+profiter\s+pleinement|n[\'’]attend\s+plus\s+que\s+vous)[^.]*\.?$',
     re.IGNORECASE
 )
 
@@ -1001,6 +1046,26 @@ def split_compound_line(line: str, level_ctx: Optional[str] = None) -> List[str]
         tail_bullets = _split_land_and_exterior_tail(m_intro_land.group("land"))
         return [synthesize_atomic_bullet(b, level_ctx) for b in (head_bullets + tail_bullets) if b]
 
+    # 4b. Cas d'une accroche de bien suivie de 'avec terrasse de XX m² / jardin / piscine'
+    m_intro_ext = re.match(
+        r'^(?P<bien>(?:d[ée]couvrez\s+)?(?:ce|cet|cette|un|une)?\s*(?:tr[èe]s\s+)?(?:bel|beau|belle|charmant[e]?|spacieux|spacieuse|magnifique|superbe|agr[ée]able)?\s*'
+        r'(?:appartement|villa|maison|duplex|studio|bas\s+de\s+villa|haut\s+de\s+villa|propri[ée]t[ée])\b[^.;]{3,95}?)'
+        r'\s+avec\s+(?P<ext>(?:une?\s+|bel\s+|beau\s+|grand[e]?\s+)?(?:terrasse|varangue|jardin(?:et)?|piscine|balcon|deck|vue\s+mer|espace\s+ext[ée]rieur)\b[^.;]*)$',
+        clean_line,
+        flags=re.IGNORECASE
+    )
+    if m_intro_ext and not re.search(r'\b(?:comprenant|se\s+compose|compos[ée]e?\s+d)\b', clean_line, re.IGNORECASE):
+        bien_part = format_bullet_uniform(m_intro_ext.group("bien"))
+        ext_parts = _split_comma_feature_clauses(m_intro_ext.group("ext"))
+        out_ie = [bien_part] if bien_part else []
+        for ep in ext_parts:
+            for sc in _split_clause_connectors(ep):
+                sb = synthesize_atomic_bullet(sc, None)
+                if sb:
+                    out_ie.append(sb)
+        if len(out_ie) >= 2:
+            return out_ie
+
     # 5. Cas des phrases d'équipements globaux (climatisation, alarme, solaire, photovoltaïque, volets)
     equip_bullets = _decompose_equipment_sentence(clean_line)
     if equip_bullets:
@@ -1014,7 +1079,11 @@ def split_compound_line(line: str, level_ctx: Optional[str] = None) -> List[str]
             comp_t = m_int_piv.group("comp_tail").strip()
             piv_out: List[str] = []
             if intro_h and len(intro_h) > 5:
-                piv_out.append(format_bullet_uniform(intro_h))
+                # Si l'intro contient elle-même situation + bien ou bien + jardin, la découper proprement
+                for ih_sub in _synthesize_intro_head(intro_h):
+                    ih_fmt = format_bullet_uniform(ih_sub)
+                    if ih_fmt:
+                        piv_out.append(ih_fmt)
             comma_clauses = _split_comma_feature_clauses(comp_t)
             for cc in comma_clauses:
                 for sub_c in _split_clause_connectors(cc):
@@ -1390,25 +1459,30 @@ def contains_keyword(text: str, kw: str) -> bool:
 
 def classify_bullet_or_sentence(text: str) -> str:
     """
-    Classe une phrase ou puce atomique dans l'une des 8 rubriques canoniques :
+    Classe une phrase ou puce atomique de façon 100 % déterministe et invariante dans l'une des 8 rubriques canoniques :
     0. conditions_modalites
     1. espace_nuit
     2. stationnement_annexes
     3. pieces_de_vie
     4. services_residence
     5. prestations_complementaires
-    6. cadre_vie (accroches de localisation/présentation globale priorisées avant exterieurs)
+    6. cadre_vie (présentation globale du bien & localisation — priorisé avant exterieurs)
     7. exterieurs
     """
     norm = text.lower().replace("’", "'")
 
-    # Priorité 0 : Conditions & Modalités financières explicites
+    # Priorité 0 : Conditions & Modalités financières / bail / disponibilité explicites
     if any(contains_keyword(norm, k) for k in [
-        "loyer :", "loyer:", "loyer mensuel", "loyer charges comprises", "dépôt de garantie",
-        "charges comprises", "hors charges", "bail", "location possible", "charges :"
+        "loyer :", "loyer:", "loyer mensuel", "loyer charges comprises", "loyer hors charges",
+        "dépôt de garantie", "depot de garantie", "caution", "charges comprises", "hors charges",
+        "bail", "location possible", "charges :", "charges de copropriété", "charges de copro",
+        "charges mensuelles", "provision pour", "colocation accept", "colocation autoris",
+        "colocation possible", "disponible immédiatement", "disponible de suite", "disponible tout de suite",
+        "disponible à partir", "disponible le ", "libre de suite", "libre immédiatement",
+        "frais d'agence", "honoraires"
     ]):
         return "conditions_modalites"
-    if re.search(r'\b(?:prix(?:\s+de\s+vente)?|seulement|loyer)\s*:?\s*\d[\d\s.]*\s*(?:f\s*cfp|xpf|f|mf|millions?)\b', norm):
+    if re.search(r'\b(?:prix(?:\s+de\s+vente)?|seulement|loyer|charges?)\s*(?:\([^)]*\))?\s*(?::|de|d\'environ)?\s*\d[\d\s.]*\s*(?:f\s*cfp|xpf|frs?|f\b|mf|millions?)\b', norm):
         return "conditions_modalites"
     if re.search(r'^\s*\d+(?:[.,]\d+)?\s*(?:mf|millions?\s*f?)\s*$', norm):
         return "conditions_modalites"
@@ -1417,7 +1491,7 @@ def classify_bullet_or_sentence(text: str) -> str:
     if any(contains_keyword(norm, k) for k in [
         "chambre", "chambres", "dressing", "parentale", "salle d'eau", "salles d'eau",
         "salle de bain", "salle de bains", "salles de bain", "salles de bains",
-        "sde", "sdb", "douche", "baignoire", "wc", "toilette", "toilettes", "sanitaire",
+        "sde", "sdb", "douche", "baignoire", "wc", "toilette", "toilettes", "sanitaire", "sanitaires",
         "bureau", "bureaux", "open space", "open-space", "plateau de bureaux",
         "salle de réunion", "surface principale", "pièce principale", "surface utile"
     ]):
@@ -1427,16 +1501,19 @@ def classify_bullet_or_sentence(text: str) -> str:
     # Priorité 2 : Stationnement, Dock, Rangement & Annexes
     if any(contains_keyword(norm, k) for k in [
         "parking", "parkings", "garage", "garages", "carport", "box", "cellier",
-        "abri voiture", "stationnement", "stationnements", "dock", "réserve", "reserve", "entrepôt",
+        "abri voiture", "abri pour véhicule", "abri deux roues", "deux roues", "deux-roues", "2 roues",
+        "garer une voiture", "garer un véhicule", "place de parking", "places de parking",
+        "place couverte", "places couvertes", "place sécurisée", "places sécurisées",
+        "stationnement", "stationnements", "dock", "réserve", "reserve", "entrepôt",
         "espace de rangement", "débarras", "debarras", "container"
     ]):
-        if "cellier intérieur" not in norm and "option" not in norm and "loyer" not in norm:
+        if "cellier intérieur" not in norm and "loyer" not in norm and "route en terre" not in norm:
             return "stationnement_annexes"
 
     # Priorité 3 : Pièces de vie (Séjour & Cuisine)
     if any(contains_keyword(norm, k) for k in [
         "cuisine", "séjour", "sejour", "salon", "salle à manger", "buanderie",
-        "baie vitrée", "baies vitrées", "îlot", "ilot", "cafétéria", "cafeteria", "pièce de vie"
+        "baie vitrée", "baies vitrées", "îlot", "ilot", "cafétéria", "cafeteria", "pièce de vie", "espace de vie"
     ]):
         return "pieces_de_vie"
 
@@ -1445,7 +1522,8 @@ def classify_bullet_or_sentence(text: str) -> str:
         "fitness", "salle de fitness", "salle de sport", "gym", "restaurant", "restaurants",
         "coiffeur", "coiffeurs", "boutique", "boutiques", "conciergerie", "concierge",
         "gardien", "gardiennage", "vidéosurveillance", "videosurveillance", "ascenseur",
-        "court de tennis", "sauna", "spa", "rooftop"
+        "court de tennis", "sauna", "rooftop", "piscine commune", "piscine de la résidence",
+        "digicode", "interphone"
     ]):
         return "services_residence"
 
@@ -1459,21 +1537,31 @@ def classify_bullet_or_sentence(text: str) -> str:
     ]) or re.search(r'\b(?:enti[èe]rement|totalement|compl[èe]tement)\s+climatis[ée]e?\b', norm):
         return "prestations_complementaires"
 
-    # Priorité 6 : Cadre de vie & Présentation générale du bien (exécuté AVANT exterieurs pour ne pas détourner les accroches)
-    if re.search(
-        r'\b(?:dans\s+une\s+r[ée]sidence|au\s+c[oœ]ur\s+d|situ[ée]e?\s+(?:dans|sur|[àa])|quartier\s+r[ée]sidentiel|'
-        r'environnement\s+calme|secteur\s+de|[àa]\s+proximit[ée]|proche\s+de\s+toutes|situation\s+id[ée]ale|'
-        r'venez\s+d[ée]couvrir|bel\s+appartement|belle\s+villa|joli\s+studio|emplacement\s+central|'
-        r'la\s+mer\s+pour\s+horizon|art\s+de\s+vivre|habitable[s]?|village\s+de)\b',
+    # Priorité 6 : Cadre de vie & Présentation générale du bien (exécuté AVANT exterieurs pour ne pas détourner les intros)
+    is_pure_exterior = bool(re.match(
+        r'^\s*(?:\d+\s+)?(?:tr[èe]s\s+)?(?:bel(?:le)?|beau|grand[e]?|vaste|joli[e]?|agr[ée]able|petit[e]?)?\s*'
+        r'(?:terrasse|varangue|jardin(?:et)?|balcon|deck|piscine|cour|v[ée]randa|loggia|patio|pergola|carbet|far[ée]|'
+        r'vue\s+(?:mer|lagon|d[ée]gag[ée]e|montagne|panoramique)|espace\s+ext[ée]rieur|entretien\s+jardin|terrain|parcelle)\b',
         norm
-    ) and not any(contains_keyword(norm, k) for k in ["terrasse", "varangue", "jardin", "piscine", "balcon", "deck"]):
+    ))
+    is_property_intro_or_loc = bool(re.search(
+        r'\b(?:appartement\s+(?:de\s+type\s+)?[ft]\d|villa\s+(?:de\s+type\s+)?[ft]\d|maison\s+(?:de\s+type\s+)?[ft]\d|'
+        r'^[ft]\d\s+duplex|bas\s+de\s+villa|haut\s+de\s+villa|rez[\s-]de[\s-]jardin\s+de\s+\d+|'
+        r'dans\s+une\s+r[ée]sidence|au\s+c[oœ]ur\s+d|situ[ée]e?\s+(?:dans|sur|[àa])|quartier\s+r[ée]sidentiel|'
+        r'environnement\s+calme|secteur\s+de|[àa]\s+proximit[ée]|proche\s+de\s+toutes|situation\s+id[ée]ale|'
+        r'bel\s+appartement|belle\s+villa|joli\s+studio|emplacement\s+(?:central|strat[ée]gique)|'
+        r'la\s+mer\s+pour\s+horizon|art\s+de\s+vivre|habitable[s]?|village\s+de|en\s+copropri[ée]t[ée]|en\s+impasse|'
+        r'r[ée]sidence\s+s[ée]curis[ée]e|petite\s+copropri[ée]t[ée]|rue\s+calme|au\s+calme|id[ée]al[e]?\s+pour\s+(?:la\s+famille|une\s+famille|un\s+couple|1er\s+achat))\b',
+        norm
+    ))
+    if is_property_intro_or_loc and not is_pure_exterior:
         return "cadre_vie"
 
     # Priorité 7 : Extérieurs, Terrasse & Vue
     if any(contains_keyword(norm, k) for k in [
-        "terrasse", "varangue", "jardin", "balcon", "deck", "piscine", "cour", "véranda",
-        "vue mer", "vue lagon", "vue dégagée", "extérieur", "extérieurs", "espace extérieur",
-        "terrain", "parcelle", "ares", "carbet", "faré", "fare"
+        "terrasse", "varangue", "jardin", "jardinet", "balcon", "deck", "piscine", "cour", "véranda",
+        "vue mer", "vue lagon", "vue dégagée", "vue montagne", "extérieur", "extérieurs", "espace extérieur",
+        "terrain", "parcelle", "ares", "carbet", "faré", "fare", "pergola", "barbecue"
     ]):
         return "exterieurs"
 
@@ -1487,6 +1575,312 @@ def classify_bullet_or_sentence(text: str) -> str:
         return max(scores, key=scores.get)
 
     return "cadre_vie"
+
+
+LEVEL_TAG_SUFFIX_RE = re.compile(
+    r'\s*\((?:rdc|au\s+rez[- ]de[- ]chauss[ée]e|[àa]\s+l[\'’][ée]tage|en\s+rez[- ]de[- ]jardin|en\s+mezzanine|en\s+sous[- ]sol|au\s+niveau\s+inf[ée]rieur)\)\s*$',
+    re.IGNORECASE
+)
+
+SECONDARY_DISCRIMINATOR_RE = re.compile(
+    r'\b(?:second[e]?|deuxi[èe]me|2[èe]me|3[èe]me|4[èe]me|autre|ind[ée]pendant[e]?|suppl[ée]mentaire|privati(?:f|ve)|parentale|invit[ée]s?)\b',
+    re.IGNORECASE
+)
+
+
+def _normalize_dedup_core(text: str) -> str:
+    s = LEVEL_TAG_SUFFIX_RE.sub('', text.lower()).strip()
+    s = re.sub(r'^(?:un|une|le|la|les|l[\'’]|d[\'’]|de|du|des)\s+', '', s)
+    s = re.sub(r'[^\w\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
+
+def sanitize_section_bullets(cat_key: str, items: List[str]) -> List[str]:
+    """
+    Applique l'hygiène stricte des tags de niveau et la déduplication intelligente
+    à l'intérieur d'une rubrique canonique :
+    - Retire les tags '(À l'étage)'/'(RDC)'/'(En rez-de-jardin)' des rubriques où ils n'ont aucun sens.
+    - Élimine les doublons exacts et les libellés génériques strictement inclus dans une puce plus riche
+      (ex: 'Séjour' supprimé si 'Grand séjour' est présent), tout en conservant les pièces distinctes
+      ('Seconde salle d'eau', 'Chambre indépendante...').
+    """
+    cleaned: List[str] = []
+    for raw in items:
+        s = raw.strip()
+        if not s:
+            continue
+        # Hygiène des tags de niveau par rubrique
+        if cat_key in ("cadre_vie", "services_residence", "prestations_complementaires", "conditions_modalites"):
+            s = LEVEL_TAG_SUFFIX_RE.sub('', s).strip()
+        elif cat_key == "exterieurs":
+            s = re.sub(r'\s*\(en\s+rez[- ]de[- ]jardin\)\s*$', '', s, flags=re.I).strip()
+            if not any(w in s.lower() for w in ("balcon", "terrasse", "varangue", "loggia", "deck")):
+                s = LEVEL_TAG_SUFFIX_RE.sub('', s).strip()
+        elif cat_key == "stationnement_annexes":
+            s = re.sub(r'\s*\(en\s+rez[- ]de[- ]jardin\)\s*$', '', s, flags=re.I).strip()
+            if not any(w in s.lower() for w in ("garage", "cellier", "buanderie", "parking", "box", "remise")):
+                s = LEVEL_TAG_SUFFIX_RE.sub('', s).strip()
+
+        if not s or len(s) < 2:
+            continue
+        cleaned.append(s)
+
+    # Déduplication intelligente en préservant l'ordre
+    final_items: List[str] = []
+    for cand in cleaned:
+        cand_core = _normalize_dedup_core(cand)
+        cand_low = cand.lower()
+        cand_lvl = LEVEL_TAG_SUFFIX_RE.search(cand_low)
+        cand_lvl_str = cand_lvl.group(0).strip() if cand_lvl else ""
+
+        skip = False
+        replace_idx = None
+        for idx, existing in enumerate(final_items):
+            ex_core = _normalize_dedup_core(existing)
+            ex_low = existing.lower()
+            ex_lvl = LEVEL_TAG_SUFFIX_RE.search(ex_low)
+            ex_lvl_str = ex_lvl.group(0).strip() if ex_lvl else ""
+
+            # Exact match (sans casse)
+            if cand_low == ex_low or (cand_core == ex_core and cand_lvl_str == ex_lvl_str):
+                skip = True
+                break
+
+            # Même pièce à deux niveaux différents (ex: WC (RDC) vs WC (À l'étage)) -> conserver les deux !
+            if cand_lvl_str and ex_lvl_str and cand_lvl_str != ex_lvl_str:
+                continue
+
+            # Si l'un des deux est explicitement une seconde/autre pièce distincte -> conserver les deux !
+            if SECONDARY_DISCRIMINATOR_RE.search(cand) != SECONDARY_DISCRIMINATOR_RE.search(existing):
+                # Exception : si l'existant est un stub ultra-générique de 1-2 mots ('Salle d'eau', 'Chambre') sans détail et cand est 'Suite parentale' -> garder les deux si le texte en parle séparément
+                continue
+
+            # Stub générique court inclus dans une puce plus riche (ex: 'Séjour' dans 'Grand séjour', 'Cuisine' dans 'Cuisine équipée')
+            if len(cand_core) >= 4 and len(ex_core) > len(cand_core) + 2 and re.search(rf'\b{re.escape(cand_core)}\b', ex_core):
+                if len(cand.split()) <= 3:
+                    skip = True
+                    break
+            if len(ex_core) >= 4 and len(cand_core) > len(ex_core) + 2 and re.search(rf'\b{re.escape(ex_core)}\b', cand_core):
+                if len(existing.split()) <= 3 and len(cand) <= 130:
+                    replace_idx = idx
+                    break
+
+        if skip:
+            continue
+        if replace_idx is not None:
+            final_items[replace_idx] = cand
+        else:
+            final_items.append(cand)
+
+    return final_items
+
+
+def extract_technical_specs(raw_description: str, raw_specs: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """
+    Extrait et ancre 100 % des spécifications techniques chiffrées depuis la description brute
+    (avec validation optionnelle des champs retournés par l'IA pour zéro hallucination).
+    """
+    if not isinstance(raw_specs, dict):
+        raw_specs = {}
+
+    desc_clean = strip_technical_noise(raw_description or "")
+    desc_lower = desc_clean.lower().replace("’", "'")
+    desc_digits = re.sub(r"[^\d]", "", desc_clean)
+
+    # 1. Charges de copropriété / locatives (XPF) — garde-fou anti-.00 et anti-'loyer hors charges'
+    charges_raw = raw_specs.get("charges_mensuelles_xpf")
+    charges_val: Optional[int] = None
+    has_valid_charge_context = bool(
+        re.search(r"(?<!hors\s)(?<!sans\s)(?<!toutes\s)(?<!aucune\s)\bcharges?\b(?!\s*comprises|\s*incluses)", desc_lower)
+    )
+    if charges_raw is not None and has_valid_charge_context:
+        try:
+            raw_chg_str = re.sub(r"[.,]\d{1,2}\s*$", "", str(charges_raw).strip())
+            c_digits = re.sub(r"[^\d]", "", raw_chg_str)
+            if c_digits:
+                val = int(c_digits)
+                if 500 <= val <= 150_000 and c_digits in desc_digits:
+                    charges_val = val
+        except Exception:
+            charges_val = None
+
+    if charges_val is None and has_valid_charge_context:
+        charge_patterns = [
+            r"(?<!hors\s)(?<!sans\s)\bcharges?\s*(?:mensuelles?|de\s+copropri[eé]t[eé]|copro|locatives?)?\s*(?:\([^)]{0,40}\))?\s*[:=]?\s*(?:seulement\s+|environ\s+|de\s+|d['’]environ\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|frs?|cfp|f\b|/mois)",
+            r"(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|frs?|f)\s*(?:/\s*mois\s*)?de\s+charges?\b",
+            r"(?<!hors\s)(?<!sans\s)\bprovision\s+(?:pour\s+|sur\s+)?charges?\s*[:=]?\s*(?:de\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})\s*(?:f\s*cfp|xpf|frs?|f\b)",
+        ]
+        for pat in charge_patterns:
+            m_chg = re.search(pat, desc_clean, re.I)
+            if m_chg:
+                c_digs = re.sub(r"[^\d]", "", m_chg.group(1))
+                if c_digs and 500 <= int(c_digs) <= 150_000:
+                    charges_val = int(c_digs)
+                    break
+
+    # 2. Étage
+    etage_raw = raw_specs.get("etage")
+    etage_val: Optional[str] = None
+    if etage_raw and isinstance(etage_raw, str):
+        etage_clean = etage_raw.strip()
+        if any(k in etage_clean.lower() for k in ("étage", "etage", "rdc", "rez", "dernier", "duplex")):
+            if any(k in desc_lower for k in ("étage", "etage", "rdc", "rez", "dernier", "duplex")):
+                etage_val = etage_clean
+    if not etage_val:
+        m_et = re.search(
+            r"\b(dernier\s+[eé]tage|\d+(?:[eè]me|er|e)\s+[eé]tage|rez[- ]de[- ]jardin|rez[- ]de[- ]chauss[eé]e|rdc)\b",
+            desc_clean,
+            re.I
+        )
+        if m_et:
+            raw_et = m_et.group(1).strip().lower()
+            if raw_et == "rdc":
+                etage_val = "Rez-de-chaussée"
+            elif "rez" in raw_et and "jardin" in raw_et:
+                etage_val = "Rez-de-jardin"
+            elif "rez" in raw_et:
+                etage_val = "Rez-de-chaussée"
+            else:
+                etage_val = raw_et[0].upper() + raw_et[1:]
+
+    # 3. Ascenseur
+    has_elevator: Optional[bool] = None
+    elev_raw = raw_specs.get("has_elevator")
+    if elev_raw is True and "ascenseur" in desc_lower:
+        has_elevator = True
+    elif elev_raw is False and "sans ascenseur" in desc_lower:
+        has_elevator = False
+    elif "ascenseur" in desc_lower and "sans ascenseur" not in desc_lower:
+        has_elevator = True
+    elif "sans ascenseur" in desc_lower:
+        has_elevator = False
+
+    # 4. Stationnement / Parking
+    parking_raw = raw_specs.get("parking_detail")
+    parking_val: Optional[str] = None
+    if parking_raw and isinstance(parking_raw, str):
+        p_clean = parking_raw.strip()
+        if any(k in p_clean.lower() for k in ("parking", "stationnement", "garage", "box", "carport", "place", "abri")):
+            if any(k in desc_lower for k in ("parking", "stationnement", "garage", "box", "carport", "place", "abri", "garer")):
+                parking_val = p_clean
+    if not parking_val:
+        m_park_rich = re.search(
+            r"\b(\d+|deux|trois|quatre|cinq)\s*(?:places?\s*(?:de\s*)?(?:parking|stationnement)s?(?:\s+(?:couvertes?|s[ée]curis[ée]es?|privatives?|ext[ée]rieures?)){0,2}|garages?(?:\s+ferm[ée]s?)?|carports?)\b",
+            desc_lower
+        )
+        if m_park_rich:
+            p_str = m_park_rich.group(0).strip()
+            for pat_n, rep_n in NUMBER_WORDS_MAP:
+                p_str = pat_n.sub(rep_n, p_str)
+            parking_val = p_str[0].upper() + p_str[1:]
+        elif "carport" in desc_lower:
+            parking_val = "Carport"
+        elif "garage" in desc_lower or re.search(r"\bbox\b", desc_lower):
+            parking_val = "Garage fermé" if "ferm" in desc_lower else "Garage"
+        elif re.search(r"place\s+de\s+parking\s+(?:couverte|s[ée]curis[ée]e)|parking\s+(?:couvert|s[ée]curis[ée])", desc_lower):
+            is_covered = bool(re.search(r"(?<!non\s)(?<!non-)\bcouvert[es]?\b", desc_lower))
+            parking_val = "Place couverte sécurisée" if is_covered else "Place de parking sécurisée"
+        elif "parking" in desc_lower or "stationnement" in desc_lower:
+            parking_val = "Parking"
+        elif "garer une voiture" in desc_lower or "abri voiture" in desc_lower:
+            parking_val = "Stationnement privatif"
+
+    # 5. Surface terrasse / varangue / deck / balcon (m²)
+    ter_raw = raw_specs.get("surface_terrasse_m2")
+    ter_val: Optional[float] = None
+    if ter_raw is not None:
+        try:
+            val_t = float(str(ter_raw).replace(",", "."))
+            int_str = str(int(val_t))
+            if 1.0 <= val_t <= 500.0 and int_str in desc_digits and any(k in desc_lower for k in ("terrasse", "varangue", "deck", "balcon")):
+                ter_val = val_t
+        except Exception:
+            ter_val = None
+    if ter_val is None:
+        m_ter = re.search(
+            r"\b(?:terrasse|varangue|deck|balcon)\s*(?:couverte|privative|am[ée]nag[ée]e|spacieux|spacieuse|d'angle)?\s*(?:de|d['’]|d['’]environ|:)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2)\b",
+            desc_clean,
+            re.I
+        )
+        if m_ter:
+            try:
+                v_t = float(m_ter.group(1).replace(",", "."))
+                if 1.0 <= v_t <= 500.0:
+                    ter_val = v_t
+            except ValueError:
+                pass
+
+    # 6. Surface habitable (m²) et Surface terrain (m²)
+    surf_hab_val: Optional[float] = None
+    m_hab = re.search(
+        r"(?:surface|superficie)\s+habitable\s*(?:de|d['’]|d['’]environ|:)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2)|"
+        r"(\d+(?:[.,]\d+)?)\s*(?:m²|m2)\s*habitables?\b",
+        desc_clean,
+        re.I
+    )
+    if m_hab:
+        try:
+            v_h = float((m_hab.group(1) or m_hab.group(2)).replace(",", "."))
+            if 10.0 <= v_h <= 2000.0:
+                surf_hab_val = v_h
+        except ValueError:
+            pass
+
+    surf_ter_val: Optional[float] = None
+    m_land_ares = re.search(
+        r"(?:terrain|parcelle)\s*(?:clos|cl[ôo]tur[ée]|arbor[ée]|plat|paysager)?\s*(?:de|d['’]|d['’]environ)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*ares?\b",
+        desc_clean,
+        re.I
+    )
+    if m_land_ares:
+        try:
+            surf_ter_val = round(float(m_land_ares.group(1).replace(",", ".")) * 100.0, 1)
+        except ValueError:
+            pass
+    else:
+        m_land_m2 = re.search(
+            r"(?:terrain|parcelle)\s*(?:clos|cl[ôo]tur[ée]|arbor[ée]|plat)?\s*(?:de|d['’]|d['’]environ)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2)\b",
+            desc_clean,
+            re.I
+        )
+        if m_land_m2:
+            try:
+                v_l = float(m_land_m2.group(1).replace(",", "."))
+                if 50.0 <= v_l <= 500_000.0:
+                    surf_ter_val = v_l
+            except ValueError:
+                pass
+
+    # 7. Standing & Équipements booléens
+    std_raw = raw_specs.get("standing")
+    std_val: Optional[str] = None
+    if std_raw and isinstance(std_raw, str):
+        if any(k in std_raw.lower() for k in ("standing", "prestige", "luxe", "récent")):
+            if any(k in desc_lower for k in ("standing", "prestige", "luxe", "récent")):
+                std_val = std_raw.strip()
+    if not std_val:
+        m_std = re.search(r"\b(bon\s+standing|haut\s+standing|grand\s+standing|prestige)\b", desc_clean, re.I)
+        if m_std:
+            std_val = m_std.group(1).capitalize()
+
+    has_ac = bool(re.search(r"\b(?:climatis[ée]e?s?|climatisation|clim\b|splits?)\b", desc_lower))
+    has_pool = bool(re.search(r"\bpiscine\b", desc_lower) and not re.search(r"sans\s+piscine", desc_lower))
+    has_sea_view = bool(re.search(r"\bvue\s+(?:sur\s+la\s+)?(?:mer|lagon|baie|oc[ée]an)\b", desc_lower))
+
+    return {
+        "charges_mensuelles_xpf": charges_val,
+        "etage": etage_val,
+        "has_elevator": has_elevator,
+        "parking_detail": parking_val,
+        "surface_terrasse_m2": ter_val,
+        "surface_habitable_m2": surf_hab_val,
+        "surface_terrain_m2": surf_ter_val,
+        "has_air_conditioning": has_ac,
+        "has_pool": has_pool,
+        "has_sea_view": has_sea_view,
+        "standing": std_val
+    }
 
 
 def structure_description(raw_description: Optional[str], property_type: Optional[str] = None) -> Dict[str, Any]:
@@ -1625,7 +2019,8 @@ def structure_description(raw_description: Optional[str], property_type: Optiona
     ]
 
     for k in ordered_keys:
-        items = categorized_items.get(k, [])
+        raw_items = categorized_items.get(k, [])
+        items = sanitize_section_bullets(k, raw_items)
         if items:
             title, icon = category_titles[k]
             sections.append({
@@ -1635,47 +2030,64 @@ def structure_description(raw_description: Optional[str], property_type: Optiona
                 "items": items
             })
 
-    # 6. Extraire 3 à 5 badges atouts flash en tête
+    # 6. Extraire les spécifications techniques chiffrées ancrées + badges atouts flash vérifiés
+    tech_specs = extract_technical_specs(raw_text)
+
     highlights = []
     full_str = " ".join(cleaned_lines_all).lower()
 
-    m_jardin = re.search(r'(?:jardin|ensemble\s+ext[ée]rieur|terrain)\s*(?:clos\s*)?(?:d[\'\s]|de\s*)?(?:environ\s*)?(\d+[\s.]?\d*)\s*(?:m²|m2|ares?)', full_str)
+    # Garde-fou anti faux-positif : 'rez-de-jardin de 80 m²' ne doit JAMAIS devenir 'Jardin ~80 m²'
+    m_jardin = re.search(
+        r'(?<!rez-de-)(?<!rez\sde\s)(?:\bjardin|\bespace\s+ext[ée]rieur\s+privatif|\bterrain)\s*(?:clos\s*|cl[ôo]tur[ée]\s*|arbor[ée]\s*|privatif\s*)?(?:d[\'’]\s*|de\s+)?(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2|ares?)',
+        full_str
+    )
     if m_jardin:
         val = m_jardin.group(1).replace(" ", "")
         unit = "ares" if "are" in m_jardin.group(0) else "m²"
-        highlights.append(f"🌿 Jardin ~{val} {unit}")
+        highlights.append(f"🌿 Jardin/Terrain {val} {unit}")
 
-    m_terrasse = re.search(r'terrasse\s*(?:couverte)?\s*(?:d[\'\s]|de\s*)?(?:environ\s*)?~?(\d+)\s*(?:m²|m2)', full_str)
-    if m_terrasse:
-        highlights.append(f"☕ Terrasse {m_terrasse.group(1)} m²")
+    if tech_specs.get("surface_terrasse_m2"):
+        t_m2 = tech_specs["surface_terrasse_m2"]
+        t_str = str(int(t_m2)) if float(t_m2).is_integer() else str(t_m2).replace(".", ",")
+        highlights.append(f"☕ Terrasse {t_str} m²")
 
-    if "vue mer" in full_str or "vue lagon" in full_str:
+    if tech_specs.get("has_sea_view"):
         highlights.append("🌊 Vue mer")
 
-    m_park = re.search(r'(\d+)\s*(?:places?\s*de\s*)?(?:stationnements?|parkings?)', full_str)
-    if m_park:
-        highlights.append(f"🚗 {m_park.group(1)} Parking{'s' if int(m_park.group(1)) > 1 else ''}")
+    if tech_specs.get("has_pool"):
+        highlights.append("🏊 Piscine")
+
+    if tech_specs.get("parking_detail"):
+        p_det = tech_specs["parking_detail"]
+        highlights.append(f"🚗 {p_det}")
     elif "garage" in full_str:
         highlights.append("🚗 Garage privatif")
 
     if "cellier" in full_str:
         highlights.append("📦 Cellier privatif")
 
-    if "fitness" in full_str or "salle de sport" in full_str:
-        highlights.append("🏋️ Fitness")
-
-    if "climatis" in full_str or "climatisation" in full_str:
+    if tech_specs.get("has_air_conditioning"):
         highlights.append("❄️ Climatisé")
 
-    if "piscine" in full_str:
-        highlights.append("🏊 Piscine")
+    if any(w in full_str for w in ("photovoltaïque", "photovoltaique", "panneaux solaires", "chauffe-eau solaire")):
+        highlights.append("☀️ Solaire / Photovoltaïque")
+
+    if any(w in full_str for w in ("volets roulants électriques", "volet roulant électrique", "volets électriques")):
+        highlights.append("⚡ Volets électriques")
+
+    if "suite parentale" in full_str:
+        highlights.append("🛏️ Suite parentale")
+
+    if "fitness" in full_str or "salle de sport" in full_str:
+        highlights.append("🏋️ Fitness")
 
     return {
         "has_structured": len(sections) > 0,
         "direct_contacts": direct_contacts,
         "agency_metadata": agency_metadata,
+        "technical_specs": tech_specs,
         "sections": sections,
-        "key_highlights": highlights[:6],
+        "key_highlights": highlights[:7],
         "cleaned_full_text": "\n\n".join(cleaned_lines_all)
     }
 

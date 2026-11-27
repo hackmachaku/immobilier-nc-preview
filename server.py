@@ -584,20 +584,29 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             ai_enrichments_by_listing: Dict[str, Dict[str, Any]] = {}
             try:
                 ai_df = db.query("""
-                    SELECT listing_id, model_version, enriched_at, extracted_contacts_json, structured_sections_json
+                    SELECT listing_id, model_version, enriched_at, extracted_contacts_json, structured_sections_json, raw_response_json
                     FROM listing_ai_enrichment
                 """)
                 for _, a_row in ai_df.iterrows():
                     al_id = str(a_row["listing_id"])
                     c_json = a_row.get("extracted_contacts_json")
                     s_json = a_row.get("structured_sections_json")
+                    r_json = a_row.get("raw_response_json")
                     contacts_list = json.loads(str(c_json)) if pd.notna(c_json) and str(c_json).strip() else []
                     sections_list = json.loads(str(s_json)) if pd.notna(s_json) and str(s_json).strip() else []
+                    raw_resp_dict = {}
+                    if pd.notna(r_json) and str(r_json).strip():
+                        try:
+                            raw_resp_dict = json.loads(str(r_json))
+                        except Exception:
+                            raw_resp_dict = {}
                     ai_enrichments_by_listing[al_id] = {
                         "model": str(a_row.get("model_version") or "IA"),
                         "enriched_at": str(a_row.get("enriched_at") or ""),
                         "direct_contacts": contacts_list,
-                        "sections": sections_list
+                        "sections": sections_list,
+                        "technical_specs": raw_resp_dict.get("technical_specs", {}) if isinstance(raw_resp_dict, dict) else {},
+                        "key_highlights": raw_resp_dict.get("key_highlights", []) if isinstance(raw_resp_dict, dict) else []
                     }
             except Exception as e:
                 logger.debug(f"Aucun cache IA chargé : {e}")
@@ -629,18 +638,24 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 struct_desc = structure_description(desc, property_type=prop_type)
                 row_id = str(row.get("id"))
                 ai_cached = ai_enrichments_by_listing.get(row_id)
+                t1_tech_specs = struct_desc.get("technical_specs", {}) or {}
                 if ai_cached and (ai_cached.get("direct_contacts") or ai_cached.get("sections")):
                     final_sections = ai_cached.get("sections", [])
                     final_contacts = ai_cached.get("direct_contacts", [])
                     is_ai_enriched = True
                     ai_model_name = ai_cached.get("model", "IA")
+                    ai_tech_specs = ai_cached.get("technical_specs", {}) or {}
+                    merged_tech_specs = {**t1_tech_specs, **{k: v for k, v in ai_tech_specs.items() if v is not None and v is not False}}
                 else:
                     final_sections = struct_desc.get("sections", [])
                     final_contacts = struct_desc.get("direct_contacts", [])
                     is_ai_enriched = False
                     ai_model_name = None
+                    merged_tech_specs = t1_tech_specs
                 is_dock = prop_type == "DOCK"
-                has_sea_view = safe_bool(row.get("has_sea_view"))
+                has_sea_view = safe_bool(row.get("has_sea_view")) or bool(merged_tech_specs.get("has_sea_view"))
+                has_pool_val = safe_bool(row.get("has_pool")) or bool(merged_tech_specs.get("has_pool"))
+                has_ac_val = safe_bool(row.get("has_air_conditioning")) or bool(merged_tech_specs.get("has_air_conditioning"))
 
                 if not img_url:
                     if is_dock:
@@ -745,8 +760,14 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 )
                 price_xpf = safe_int(row.get("price_xpf"), 0)
                 surf_hab = safe_float(row.get("surface_habitable_m2"), 0.0)
+                if surf_hab <= 0 and merged_tech_specs.get("surface_habitable_m2"):
+                    surf_hab = safe_float(merged_tech_specs.get("surface_habitable_m2"), 0.0)
                 surf_ter = safe_float(row.get("surface_terrain_m2"), 0.0)
+                if surf_ter <= 0 and merged_tech_specs.get("surface_terrain_m2"):
+                    surf_ter = safe_float(merged_tech_specs.get("surface_terrain_m2"), 0.0)
                 surf_var = safe_float(row.get("surface_terrasse_m2"), 0.0)
+                if surf_var <= 0 and merged_tech_specs.get("surface_terrasse_m2"):
+                    surf_var = safe_float(merged_tech_specs.get("surface_terrasse_m2"), 0.0)
                 
                 if is_location:
                     price_m2 = round(price_xpf / surf_hab, 1) if surf_hab > 0 else 0.0
@@ -939,9 +960,9 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     features.append(f"Varangue {surf_var:.0f} m²")
                 if has_sea_view:
                     features.append("Vue mer")
-                if safe_bool(row.get("has_pool")):
+                if has_pool_val:
                     features.append("Piscine")
-                if safe_bool(row.get("has_air_conditioning")):
+                if has_ac_val:
                     features.append("Climatisé")
 
                 raw_comp = row.get("complementary_details_json")
@@ -955,9 +976,12 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 charges_m = safe_int(row.get("charges_mensuelles_xpf"), None)
                 if charges_m and charges_m <= 0:
                     charges_m = None
-                etage_val = safe_str(row.get("etage")) or None
-                has_elev = safe_bool(row.get("has_elevator"))
-                parking_det = safe_str(row.get("parking_detail")) or None
+                if not charges_m and merged_tech_specs.get("charges_mensuelles_xpf"):
+                    charges_m = safe_int(merged_tech_specs.get("charges_mensuelles_xpf"), None)
+                etage_val = safe_str(row.get("etage")) or merged_tech_specs.get("etage") or None
+                has_elev = safe_bool(row.get("has_elevator")) or (merged_tech_specs.get("has_elevator") is True)
+                parking_det = safe_str(row.get("parking_detail")) or merged_tech_specs.get("parking_detail") or None
+                standing_val = merged_tech_specs.get("standing") or None
                 parkings_cnt = safe_int(row.get("parkings"), None)
                 if parkings_cnt and parkings_cnt <= 0:
                     parkings_cnt = None
@@ -1103,6 +1127,10 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "hasElevator": has_elev,
                     "parkingDetail": parking_det,
                     "parkings": parkings_cnt,
+                    "standing": standing_val,
+                    "hasPool": has_pool_val,
+                    "hasAirConditioning": has_ac_val,
+                    "hasSeaView": has_sea_view,
                     "complementaryDetails": comp_details,
                     "directNegotiator": direct_neg,
                     "directPhone": direct_ph,

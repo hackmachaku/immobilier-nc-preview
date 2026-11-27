@@ -3696,6 +3696,167 @@
       }
     }
 
+    // =========================================================================
+    // FORMATEUR VISUEL CANONIQUE DES FICHES ASSISTÉES PAR IA (ORDRE & RELIEF)
+    // =========================================================================
+    const AI_SECTION_THEMES = {
+      cadre_vie: {
+        border: 'border-l-sky-400 border-sky-500/25',
+        bg: 'bg-sky-950/20',
+        titleText: 'text-sky-300',
+        dot: 'text-sky-400',
+        countBg: 'bg-sky-500/20 text-sky-200 border-sky-500/30',
+        fullWidth: true
+      },
+      services_residence: {
+        border: 'border-l-indigo-400 border-indigo-500/25',
+        bg: 'bg-indigo-950/20',
+        titleText: 'text-indigo-300',
+        dot: 'text-indigo-400',
+        countBg: 'bg-indigo-500/20 text-indigo-200 border-indigo-500/30',
+        fullWidth: true
+      },
+      pieces_de_vie: {
+        border: 'border-l-amber-400 border-amber-500/25',
+        bg: 'bg-amber-950/15',
+        titleText: 'text-amber-300',
+        dot: 'text-amber-400',
+        countBg: 'bg-amber-500/20 text-amber-200 border-amber-500/30',
+        fullWidth: false
+      },
+      espace_nuit: {
+        border: 'border-l-purple-400 border-purple-500/25',
+        bg: 'bg-purple-950/15',
+        titleText: 'text-purple-300',
+        dot: 'text-purple-400',
+        countBg: 'bg-purple-500/20 text-purple-200 border-purple-500/30',
+        fullWidth: false
+      },
+      exterieurs: {
+        border: 'border-l-emerald-400 border-emerald-500/25',
+        bg: 'bg-emerald-950/15',
+        titleText: 'text-emerald-300',
+        dot: 'text-emerald-400',
+        countBg: 'bg-emerald-500/20 text-emerald-200 border-emerald-500/30',
+        fullWidth: false
+      },
+      stationnement_annexes: {
+        border: 'border-l-cyan-400 border-cyan-500/25',
+        bg: 'bg-cyan-950/15',
+        titleText: 'text-cyan-300',
+        dot: 'text-cyan-400',
+        countBg: 'bg-cyan-500/20 text-cyan-200 border-cyan-500/30',
+        fullWidth: false
+      },
+      prestations_complementaires: {
+        border: 'border-l-teal-400 border-teal-500/25',
+        bg: 'bg-teal-950/15',
+        titleText: 'text-teal-300',
+        dot: 'text-teal-400',
+        countBg: 'bg-teal-500/20 text-teal-200 border-teal-500/30',
+        fullWidth: true
+      },
+      conditions_modalites: {
+        border: 'border-l-rose-400 border-rose-500/25',
+        bg: 'bg-rose-950/15',
+        titleText: 'text-rose-300',
+        dot: 'text-rose-400',
+        countBg: 'bg-rose-500/20 text-rose-200 border-rose-500/30',
+        fullWidth: true
+      }
+    };
+
+    function escapeHtmlSafe(str) {
+      return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+    }
+
+    function formatAiBulletHtml(rawBullet) {
+      let text = String(rawBullet || '').trim();
+      if (!text) return '';
+
+      // 1. Extraire le marqueur de niveau en fin de puce pour l'afficher en micro-badge dédié
+      let levelBadgeHtml = '';
+      const lvlMatch = text.match(/\s*\((RDC|À l['’]étage|Au rez-de-chaussée|En mezzanine|En sous-sol|Au niveau inférieur)\)\s*$/i);
+      if (lvlMatch) {
+        const rawLbl = lvlMatch[1].trim();
+        text = text.slice(0, lvlMatch.index).trim();
+        const lowLbl = rawLbl.toLowerCase();
+        if (lowLbl.includes('rdc') || lowLbl.includes('rez')) {
+          levelBadgeHtml = `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-200 border border-amber-400/30 whitespace-nowrap">RDC</span>`;
+        } else if (lowLbl.includes('étage') || lowLbl.includes('etage')) {
+          levelBadgeHtml = `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-purple-500/25 text-purple-200 border border-purple-400/35 whitespace-nowrap">Étage</span>`;
+        } else if (lowLbl.includes('mezzanine')) {
+          levelBadgeHtml = `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-cyan-500/20 text-cyan-200 border border-cyan-400/30 whitespace-nowrap">Mezzanine</span>`;
+        } else {
+          levelBadgeHtml = `<span class="ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-slate-700/80 text-slate-200 border border-slate-600 whitespace-nowrap">${escapeHtmlSafe(rawLbl)}</span>`;
+        }
+      }
+
+      let safe = escapeHtmlSafe(text);
+
+      // 2. Mettre en gras le libellé avant ':' (ex: 'Loyer charges comprises : 175 000 F CFP')
+      const colonIdx = safe.indexOf(' : ');
+      if (colonIdx > 1 && colonIdx < 48) {
+        const lbl = safe.slice(0, colonIdx);
+        const val = safe.slice(colonIdx + 3);
+        safe = `<strong class="text-white font-semibold">${lbl} :</strong> ${val}`;
+      } else {
+        // Sinon, mettre en relief l'élément immobilier clé en tête de puce
+        safe = safe.replace(
+          /^((?:\d+(?:ère|ème)?\s+)?(?:Suite parentale|Cuisine(?:\s+(?:équipée|aménagée|ouverte|américaine|indépendante|fonctionnelle))?|Grand\s+séjour|Séjour(?:\s*\/\s*salle\s+à\s+manger)?|Salon|Salle\s+à\s+manger|Pièce\s+de\s+vie|Buanderie|Chambres?|Bureau[x]?|Salle[s]?\s+d(?:&#39;|'|’)eau|Salle[s]?\s+de\s+bains?|WC\s+(?:séparé|indépendant)s?|WC|Terrasse(?:\s+couverte)?|Varangue|Balcon|Deck|Jardin(?:et)?|Terrain(?:\s+clos)?|Piscine|Vue\s+(?:mer|lagon|dégagée|montagne)|Garage(?:\s+fermé)?|Carport|Cellier|Box|Dock|Places?\s+de\s+parking|Parking(?:\s+privatif|\s+couvert|\s+sécurisé)?|Climatisation(?:\s+intégrale)?|Volets\s+roulants(?:\s+électriques)?|Chauffe-eau\s+solaire|Panneaux\s+photovoltaïques|Système\s+d(?:&#39;|'|’)alarme|Alarme|Fibre\s+optique|Ascenseur|Appartement\s+F\d|Villa\s+F\d|Maison\s+F\d|Studio|Duplex|Colocation))/i,
+          '<strong class="text-white font-semibold">$1</strong>'
+        );
+      }
+
+      // 3. Mettre en relief les montants (F CFP / XPF / MF) et les surfaces (m² / ares)
+      safe = safe.replace(
+        /(\d{1,3}(?:[\s.]\d{3})+|\d+(?:[.,]\d+)?)\s*(F\s*CFP|XPF|MF|millions?\s*F?)\b/gi,
+        '<span class="font-bold text-emerald-300 whitespace-nowrap">$1 $2</span>'
+      );
+      safe = safe.replace(
+        /(\d+(?:[.,]\d+)?)\s*(m²|ares?)\b/gi,
+        '<span class="font-semibold text-sky-200 whitespace-nowrap">$1 $2</span>'
+      );
+
+      return `<span class="flex-1 text-slate-200">${safe}${levelBadgeHtml}</span>`;
+    }
+
+    function renderStructuredSectionsGrid(sections, compact = false) {
+      if (!sections || !Array.isArray(sections) || sections.length === 0) return '';
+      return `
+        <div class="grid grid-cols-1 ${compact ? '' : 'md:grid-cols-2'} gap-3">
+          ${sections.map(sec => {
+            const theme = AI_SECTION_THEMES[sec.key] || AI_SECTION_THEMES.cadre_vie;
+            const spanClass = (!compact && theme.fullWidth) ? 'md:col-span-2' : '';
+            const items = sec.items || [];
+            return `
+              <div class="p-3.5 rounded-xl ${theme.bg} border border-slate-800/90 border-l-4 ${theme.border} hover:border-slate-700 transition-all shadow-sm ${spanClass}">
+                <div class="flex items-center justify-between gap-2 mb-2.5 pb-1.5 border-b border-slate-800/70">
+                  <div class="flex items-center gap-2 min-w-0">
+                    <span class="text-base shrink-0">${sec.icon || '📌'}</span>
+                    <h5 class="text-xs font-extrabold ${theme.titleText} uppercase tracking-wider truncate">${escapeHtmlSafe(sec.title)}</h5>
+                  </div>
+                  <span class="px-1.5 py-0.5 rounded-md text-[10px] font-bold border ${theme.countBg} shrink-0">${items.length}</span>
+                </div>
+                <ul class="space-y-1.5 text-xs">
+                  ${items.map(bullet => `
+                    <li class="flex items-start gap-2 leading-relaxed">
+                      <span class="${theme.dot} font-black select-none leading-none pt-1 text-[10px]">▸</span>
+                      ${formatAiBulletHtml(bullet)}
+                    </li>
+                  `).join('')}
+                </ul>
+              </div>
+            `;
+          }).join('')}
+        </div>
+      `;
+    }
+
     function openDetailModal(id) {
       if (leafletMapInstance) {
         leafletMapInstance.closePopup();
@@ -4015,11 +4176,11 @@
               </div>
               <div class="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
                 <span class="text-[10px] text-slate-400 block uppercase tracking-wider">Climatisation</span>
-                <span class="font-bold ${item.features && item.features.includes('Climatisé') ? 'text-cyan-300' : 'text-slate-400'} text-base block mt-0.5">${item.features && item.features.includes('Climatisé') ? 'Oui ❄️' : 'Non précisée'}</span>
+                <span class="font-bold ${(item.hasAirConditioning || (item.features && item.features.includes('Climatisé'))) ? 'text-cyan-300' : 'text-slate-400'} text-base block mt-0.5">${(item.hasAirConditioning || (item.features && item.features.includes('Climatisé'))) ? 'Oui ❄️' : 'Non précisée'}</span>
               </div>
               <div class="p-3 rounded-xl bg-slate-950/70 border border-slate-800">
-                <span class="text-[10px] text-slate-400 block uppercase tracking-wider">Vue</span>
-                <span class="font-bold ${item.features && item.features.includes('Vue mer') ? 'text-sky-300' : 'text-slate-300'} text-base block mt-0.5">${item.features && item.features.includes('Vue mer') ? 'Vue mer / dégagée 🌊' : 'Dégagée / Normale'}</span>
+                <span class="text-[10px] text-slate-400 block uppercase tracking-wider">Vue & Extérieur</span>
+                <span class="font-bold ${(item.hasSeaView || (item.features && item.features.includes('Vue mer'))) ? 'text-sky-300' : ((item.hasPool || (item.features && item.features.includes('Piscine'))) ? 'text-emerald-300' : 'text-slate-300')} text-base block mt-0.5">${(item.hasSeaView || (item.features && item.features.includes('Vue mer'))) ? 'Vue mer 🌊' : ((item.hasPool || (item.features && item.features.includes('Piscine'))) ? 'Piscine 🏊' : (item.surfaceTerrain > 0 ? 'Terrain ' + (item.surfaceTerrain / 100).toFixed(1) + ' ares' : 'Dégagée / Normale'))}</span>
               </div>
             </div>
 
@@ -4088,28 +4249,11 @@
               </div>
             ` : ''}
 
-            <!-- Vue 1 : Fiche Structurée en Rubriques Invariantes -->
+            <!-- Vue 1 : Fiche Structurée en Rubriques Invariantes (Gabarit Canonique v4) -->
             <div id="descStructured_${item.id}" class="space-y-3">
-              ${(item.structuredDescription && item.structuredDescription.length > 0) ? `
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                  ${item.structuredDescription.map(sec => `
-                    <div class="p-3.5 rounded-xl bg-slate-900/70 border border-slate-800 hover:border-slate-700/80 transition-all ${sec.key === 'cadre_vie' || sec.key === 'services_residence' || sec.key === 'prestations_complementaires' ? 'md:col-span-2' : ''}">
-                      <div class="flex items-center gap-2 mb-2 pb-1.5 border-b border-slate-800/60">
-                        <span class="text-base">${sec.icon || '📌'}</span>
-                        <h5 class="text-xs font-bold text-sky-300 uppercase tracking-wider">${sec.title}</h5>
-                      </div>
-                      <ul class="space-y-1.5 text-xs text-slate-300">
-                        ${sec.items.map(bullet => `
-                          <li class="flex items-start gap-2 leading-relaxed">
-                            <span class="text-sky-400 font-bold select-none leading-none pt-0.5">•</span>
-                            <span class="text-slate-200">${bullet}</span>
-                          </li>
-                        `).join('')}
-                      </ul>
-                    </div>
-                  `).join('')}
-                </div>
-              ` : `
+              ${(item.structuredDescription && item.structuredDescription.length > 0)
+                ? renderStructuredSectionsGrid(item.structuredDescription, false)
+                : `
                 <div class="p-4 rounded-xl bg-slate-900/50 border border-slate-800">
                   <p class="text-xs sm:text-sm text-slate-300 leading-relaxed whitespace-pre-line">${item.description}</p>
                 </div>
@@ -5754,18 +5898,7 @@
             </div>
           `;
         } else {
-          sectionsDisplay.innerHTML = sections.map(s => `
-            <div class="p-3 rounded-xl bg-slate-950 border border-slate-800/80 space-y-1.5">
-              <div class="font-bold text-white text-xs flex items-center gap-2 text-sky-300">
-                <span>${s.icon || '📌'}</span>
-                <span>${s.title}</span>
-                <span class="text-[10px] text-slate-400 font-normal">(${(s.items || []).length} puces)</span>
-              </div>
-              <ul class="space-y-1 text-slate-300 text-[11px] pl-5 list-disc marker:text-sky-400">
-                ${(s.items || []).map(it => `<li>${it}</li>`).join('')}
-              </ul>
-            </div>
-          `).join('');
+          sectionsDisplay.innerHTML = renderStructuredSectionsGrid(sections, true);
         }
       }
 
@@ -6117,13 +6250,28 @@
           const res = await resp.json();
           const d = res.data;
 
-          // Mettre à jour l'élément localement dans listingsData
+          // Mettre à jour l'élément localement dans listingsData (rubriques + contacts + spécifications techniques)
           const item = listingsData.find(x => x.id === listingId);
           if (item) {
             item.isAiEnriched = true;
             item.aiModelName = d.model || d.provider_used || 'Qwen 2.5';
             item.directContacts = d.direct_contacts || [];
             item.structuredDescription = d.sections || [];
+            if (d.raw_response && Array.isArray(d.raw_response.key_highlights) && d.raw_response.key_highlights.length > 0) {
+              item.descriptionHighlights = d.raw_response.key_highlights;
+            }
+            const ts = d.technical_specs || {};
+            if (ts.charges_mensuelles_xpf && !item.chargesMensuelles) item.chargesMensuelles = ts.charges_mensuelles_xpf;
+            if (ts.surface_terrasse_m2 && !item.surfaceVarangue) item.surfaceVarangue = ts.surface_terrasse_m2;
+            if (ts.surface_habitable_m2 && !item.surfaceHabitable) item.surfaceHabitable = ts.surface_habitable_m2;
+            if (ts.surface_terrain_m2 && !item.surfaceTerrain) item.surfaceTerrain = ts.surface_terrain_m2;
+            if (ts.etage && !item.etage) item.etage = ts.etage;
+            if (ts.has_elevator === true) item.hasElevator = true;
+            if (ts.parking_detail && !item.parkingDetail) item.parkingDetail = ts.parking_detail;
+            if (ts.has_air_conditioning) item.hasAirConditioning = true;
+            if (ts.has_pool) item.hasPool = true;
+            if (ts.has_sea_view) item.hasSeaView = true;
+            if (ts.standing) item.standing = ts.standing;
           }
 
           showNotificationToast(
