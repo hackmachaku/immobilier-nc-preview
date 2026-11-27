@@ -139,14 +139,18 @@ class CompletenessAuditor:
         }
 
     def audit_database(self, limit: int = 500, source_filter: Optional[str] = None) -> Dict[str, Any]:
-        """Exécute un audit global sur la base DuckDB locale."""
+        """Exécute un audit global sur la base DuckDB locale (requête strictement paramétrée)."""
+        safe_limit = max(1, min(int(limit), 10000))
+        params: List[Any] = []
         query = "SELECT * FROM listings WHERE is_active=TRUE"
         if source_filter:
-            query += f" AND source = '{source_filter}'"
-        query += f" ORDER BY scraped_at DESC LIMIT {limit}"
+            query += " AND source = ?"
+            params.append(str(source_filter))
+        query += " ORDER BY scraped_at DESC LIMIT ?"
+        params.append(safe_limit)
 
         try:
-            df = self.db.query(query)
+            df = self.db.query(query, params)
         except Exception as e:
             logger.error(f"Erreur requête audit database : {e}")
             return {"error": str(e)}

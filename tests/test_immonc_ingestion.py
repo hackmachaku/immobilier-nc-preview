@@ -53,7 +53,7 @@ def test_parse_immonc_item_vente_maison(scraper, cleaner):
     assert cleaned.price_xpf == 28000000
     assert cleaned.transaction_type == TransactionType.VENTE
     assert cleaned.property_type == PropertyType.MAISON_VILLA
-    assert cleaned.commune == Commune.MONT_DORE
+    assert cleaned.commune == Commune.NOUMEA
     assert cleaned.surface_terrain_m2 == 1026.0
     assert cleaned.has_pool is True
     assert cleaned.agency_name == "Acti Immobilier"

@@ -2,12 +2,12 @@ import re
 import json
 from typing import Optional, Tuple
 from src.models.listing import RawListing, CleanedListing, TransactionType, PropertyType, Commune
-from src.reference.geo import GeoReferential
+from src.reference.geo import GeoReferential, get_geo_referential, normalize_text
 
 
 class ListingCleaner:
     def __init__(self, geo_ref: Optional[GeoReferential] = None):
-        self.geo_ref = geo_ref or GeoReferential()
+        self.geo_ref = geo_ref or get_geo_referential()
 
     def parse_price(self, raw_price: Optional[str], text_fallback: str = "") -> Optional[int]:
         """
@@ -91,11 +91,20 @@ class ListingCleaner:
             except ValueError:
                 pass
         else:
-            terrain_match = re.search(r"terrain\s*(?:de)?\s*(\d+(?:[\s\.,]\d+)?)\s*(?:m²|m2)", blob)
+            terrain_match = re.search(
+                r"(?:terrain|parcelle)\s*(?:de|d['’])?\s*(\d+(?:[\s\.,]\d+)?)\s*(?:m²|m2)",
+                blob,
+            )
             if terrain_match:
                 try:
-                    cleaned_t = re.sub(r"[^\d]", "", terrain_match.group(1))
-                    surface_terrain = float(cleaned_t)
+                    raw_t = terrain_match.group(1).strip()
+                    # Gère les décimales ("650,5" / "650.5") vs séparateurs de milliers ("1 200" / "1.200")
+                    if re.match(r"^\d+[\.,]\d{1,2}$", raw_t):
+                        surface_terrain = float(raw_t.replace(",", "."))
+                    else:
+                        cleaned_t = re.sub(r"[^\d]", "", raw_t)
+                        if cleaned_t:
+                            surface_terrain = float(cleaned_t)
                 except ValueError:
                     pass
 
@@ -185,21 +194,68 @@ class ListingCleaner:
         return rooms, bedrooms
 
     def detect_property_type(self, declared: Optional[str], title: str, description: str) -> PropertyType:
-        """Identifie le type de bien immobilier."""
-        blob = f"{declared or ''} {title} {description}".lower()
+        """Identifie le type de bien immobilier avec priorité stricte au type déclaré puis au titre."""
+        dec_norm = normalize_text(declared or "")
+        title_norm = normalize_text(title or "")
+        desc_norm = normalize_text(description or "")
 
-        if re.search(r"\b(villa|maison|propriete|dock\s*habitable)\b", blob):
-            return PropertyType.MAISON_VILLA
-        if re.search(r"\b(appartement|studio|duplex|triplex|attique|loft)\b", blob):
-            return PropertyType.APPARTEMENT
-        if re.search(r"\b(terrain|parcelle|lotissement)\b", blob):
-            return PropertyType.TERRAIN
-        if re.search(r"\b(immeuble|murs|batiment)\b", blob):
-            return PropertyType.IMMEUBLE
-        if re.search(r"\b(dock|entrepot|hangar)\b", blob):
-            return PropertyType.DOCK
-        if re.search(r"\b(local|bureau|commerce|boutique)\b", blob):
-            return PropertyType.LOCAL_COMMERCIAL
+        # 1. Priorité absolue au type explicitement déclaré par la source
+        if dec_norm:
+            if re.search(r"\b(terrain|parcelle|foncier)\b", dec_norm):
+                return PropertyType.TERRAIN
+            if re.search(r"\bdock\s*habitable\b", dec_norm):
+                return PropertyType.MAISON_VILLA
+            if re.search(r"\b(dock|entrepot|hangar)\b", dec_norm):
+                return PropertyType.DOCK
+            if re.search(r"\b(local|locaux|bureau|bureaux|commerce|boutique|commercial|professionnel)\b", dec_norm):
+                return PropertyType.LOCAL_COMMERCIAL
+            if re.search(r"\b(immeuble|murs|batiment)\b", dec_norm):
+                return PropertyType.IMMEUBLE
+            if re.search(r"\b(appartement|studio|duplex|triplex|attique|loft)\b", dec_norm):
+                return PropertyType.APPARTEMENT
+            if re.search(r"\b(villa|maison|propriete|chalet|bungalow)\b", dec_norm):
+                return PropertyType.MAISON_VILLA
+
+        # 2. Analyse du titre (sans contamination par les mentions "terrain de 8 ares" dans un titre de villa)
+        if title_norm:
+            if re.search(r"\bdock\s*habitable\b", title_norm):
+                return PropertyType.MAISON_VILLA
+            if re.search(r"\b(dock|entrepot|hangar)\b", title_norm):
+                return PropertyType.DOCK
+            if re.search(r"\b(local|locaux|bureau|bureaux|commerce|boutique|fonds\s*de\s*commerce|murs\s*commerciaux)\b", title_norm):
+                return PropertyType.LOCAL_COMMERCIAL
+            if re.search(r"\b(immeuble|batiment)\b", title_norm):
+                return PropertyType.IMMEUBLE
+            # Un titre qui commence par "terrain" / "parcelle" est un terrain même s'il mentionne "idéal villa"
+            if re.search(r"^(?:a\s+vendre\s*[-:]?\s*)?(?:beau\s+|grand\s+|superbe\s+|magnifique\s+)?(?:terrain|parcelle|lot\s+de\s+terrain)\b", title_norm):
+                return PropertyType.TERRAIN
+            if re.search(r"\b(villa|maison|propriete|chalet|bungalow)\b", title_norm):
+                return PropertyType.MAISON_VILLA
+            if re.search(r"\b(appartement|studio|duplex|triplex|attique|loft)\b", title_norm):
+                return PropertyType.APPARTEMENT
+            if re.search(r"\b(terrain|parcelle|lotissement)\b", title_norm):
+                return PropertyType.TERRAIN
+
+        # 3. Fallback sur le descriptif (en neutralisant "pour construire une villa/maison" sur un terrain)
+        if desc_norm:
+            if re.search(r"\bterrain\s+(?:constructible|a\s+batir|viabilise|nu|plat|agricole)\b", desc_norm) and not re.search(r"\b(?:villa|maison|appartement)\s+(?:de\s+type\s+)?f[1-6]\b", desc_norm):
+                return PropertyType.TERRAIN
+            if re.search(r"\bdock\s*habitable\b", desc_norm):
+                return PropertyType.MAISON_VILLA
+            if re.search(r"\b(dock|entrepot|hangar)\b", desc_norm):
+                return PropertyType.DOCK
+            if re.search(r"\b(local\s+commercial|plateau\s+de\s+bureaux|bureaux?\s+a\s+louer|fonds\s+de\s+commerce)\b", desc_norm):
+                return PropertyType.LOCAL_COMMERCIAL
+            if re.search(r"\b(immeuble\s+de\s+rapport|immeuble)\b", desc_norm):
+                return PropertyType.IMMEUBLE
+            if re.search(r"\b(appartement|studio|duplex|triplex|attique|loft)\b", desc_norm):
+                return PropertyType.APPARTEMENT
+            if re.search(r"\b(villa|maison|propriete)\b", desc_norm):
+                return PropertyType.MAISON_VILLA
+            if re.search(r"\b(terrain|parcelle|lotissement)\b", desc_norm):
+                return PropertyType.TERRAIN
+            if re.search(r"\b(local|bureau|commerce|boutique)\b", desc_norm):
+                return PropertyType.LOCAL_COMMERCIAL
 
         return PropertyType.AUTRE
 
@@ -330,28 +386,36 @@ class ListingCleaner:
             raw_price_str=raw.raw_price,
         )
 
+        # Pour un terrain nu, la surface déclarée est une surface terrain, JAMAIS une surface habitable
+        if prop_type == PropertyType.TERRAIN:
+            if surface_terrain is None and surface_hab is not None:
+                surface_terrain = surface_hab
+            surface_hab = None
+
         # Les biens non résidentiels (terrains, docks, locaux professionnels) n'ont pas de pièces d'habitation
         if prop_type in (PropertyType.TERRAIN, PropertyType.DOCK, PropertyType.LOCAL_COMMERCIAL, PropertyType.IMMEUBLE):
             rooms, bedrooms = None, None
         else:
             rooms, bedrooms = self.parse_rooms(raw.raw_rooms, f"{raw.title} {raw.description}")
 
-        # Estimation de la surface habitable si non déclarée mais typologie F1/F2/F3... connue (barème standard NC)
-        if surface_hab is None and prop_type in (PropertyType.APPARTEMENT, PropertyType.MAISON_VILLA) and rooms:
-            standard_surfaces = {1: 30.0, 2: 50.0, 3: 75.0, 4: 100.0, 5: 135.0, 6: 170.0}
-            surface_hab = standard_surfaces.get(rooms, float(rooms * 25.0))
-
         # Localisation hiérarchique :
         # 1. Vérifier si le titre déclare un quartier précis (ex: "à Nouméa (P.k. 6)")
         clean_desc = re.sub(r'(?:contact|tél|tel|email|mail|agent|notre agence|retrouvez-nous)\s*:?.*', '', raw.description or '', flags=re.IGNORECASE)
         commune, quartier, _ = self.geo_ref.find_location(raw.title or "")
 
-        # 2. Si le titre n'a pas de quartier précis (ex: titre générique "Maison F4"),
-        # analyser conjointement la localisation déclarée et le descriptif nettoyé
+        # 2. Si le titre n'a pas de quartier précis, analyser la localisation déclarée puis le descriptif
         if not quartier:
-            blob_loc = f"{raw.raw_location or ''} {clean_desc}".strip()
-            c_blob, q_blob, _ = self.geo_ref.find_location(blob_loc)
-            if q_blob:
+            if raw.raw_location:
+                c_loc, q_loc, _ = self.geo_ref.find_location(raw.raw_location)
+                if q_loc and (commune == Commune.AUTRE or c_loc == commune):
+                    quartier = q_loc
+                    commune = c_loc
+                elif commune == Commune.AUTRE and c_loc != Commune.AUTRE:
+                    commune = c_loc
+
+        if not quartier:
+            c_blob, q_blob, _ = self.geo_ref.find_location(clean_desc)
+            if q_blob and (commune == Commune.AUTRE or c_blob == commune):
                 quartier = q_blob
                 commune = c_blob
             elif commune == Commune.AUTRE and c_blob != Commune.AUTRE:
@@ -359,23 +423,27 @@ class ListingCleaner:
 
         unique_id = f"{raw.source.lower()}_{raw.source_id}"
 
-        # Attributs qualitatifs
+        # Attributs qualitatifs (avec protection contre les faux positifs : piscinable, sans ascenseur, freebox...)
         raw_facs = getattr(raw, "facilities", None) or []
         blob_features = f"{raw.title} {raw.description or ''}".lower()
+        blob_norm = normalize_text(blob_features)
 
-        has_sea_view = bool(re.search(r"\b(vue\s*mer|vue\s*lagon|front\s*de\s*mer|bord\s*de\s*mer|les\s*pieds\s*dans\s*l'eau)\b", blob_features))
+        has_sea_view = bool(re.search(r"\b(vue\s*mer|vue\s*lagon|vue\s*baie|front\s*de\s*mer|bord\s*de\s*mer|les\s*pieds\s*dans\s*l['’]?eau|apercu\s*mer)\b", blob_norm))
         if "vue_mer" in raw_facs or "bord_de_mer" in raw_facs:
             has_sea_view = True
 
-        has_pool = bool(re.search(r"\b(piscine|bassin)\b", blob_features))
+        has_pool = bool(
+            re.search(r"\b(piscine|bassin\s+de\s+nage|couloir\s+de\s+nage|spa\s+pool)\b", blob_norm)
+            and not re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non)\b", blob_norm)
+        )
         if "piscine" in raw_facs or "piscine_commune" in raw_facs:
             has_pool = True
 
-        has_ac = bool(re.search(r"\b(climatis[eé]|clim\b)", blob_features))
+        has_ac = bool(re.search(r"\b(climatis\w*|climatiseur\w*|clims?|air\s+conditionne)\b", blob_norm))
         if "climatisation" in raw_facs:
             has_ac = True
 
-        is_sec = bool(re.search(r"\b(s[eé]curis[eé]|gardien|digicode|interphone)\b", blob_features))
+        is_sec = bool(re.search(r"\b(securis\w*|gardien|digicode|interphone|visiophone|alarme|portail\s+electrique|portail\s+motorise)\b", blob_norm))
         if "securite" in raw_facs:
             is_sec = True
 
@@ -414,40 +482,110 @@ class ListingCleaner:
                 except ValueError:
                     pass
 
-        # Stationnement & Parking
+        # Stationnement & Parking (exclusion de freebox/livebox et "lit 2 places" / "canapé 3 places")
         parkings: Optional[int] = None
         parking_detail: Optional[str] = None
-        if "carport" in blob_features:
+        blob_park_clean = re.sub(r"\b(?:freebox|livebox|bbox|box\s*(?:internet|fibre|tv)|lit\s+\d+\s*places?|canap[eé]\s+\d+\s*places?)\b", " ", blob_norm)
+        if re.search(r"\bcarport\b", blob_park_clean):
             parking_detail = "Carport"
             parkings = 1
-        elif "garage" in blob_features or "box" in blob_features:
+        elif re.search(r"\b(garage|box)\b", blob_park_clean):
             parking_detail = "Garage fermé"
             parkings = 1
-        elif "parking" in blob_features or "stationnement" in blob_features:
+        elif re.search(r"\b(parking|stationnement)\b", blob_park_clean):
             parking_detail = "Parking"
             parkings = 1
 
-        m_park_num = re.search(r"(\d+)\s*(?:places?|parkings?|carports?|garages?|box|stationnements?)", blob_features)
+        m_park_num = re.search(
+            r"\b([1-9]|1[0-9]|20)\s*(?:places?\s*(?:de\s*)?(?:parking|stationnement|voiture|couvertes?|privatives?|exterieures?|interieures?|aeriennes?)|parkings?|carports?|garages?|box\s*(?:fermes?)?|stationnements?)\b",
+            blob_park_clean,
+        )
         if m_park_num:
             try:
                 parkings = int(m_park_num.group(1))
             except ValueError:
                 pass
 
-        # Étage et Ascenseur
+        # Étage et Ascenseur (exclusion stricte de "sans ascenseur")
         etage: Optional[str] = getattr(raw, "raw_floor", None)
         if not etage:
-            m_et = re.search(r"\b(dernier\s+[eé]tage|\d+(?:[eè]me|er)?\s+[eé]tage|rdc|rez[- ]de[- ]chauss[eé]e)\b", blob_features)
+            m_et = re.search(
+                r"\b(dernier\s+[eé]tage|\d+(?:[eè]me|er|e)\s+[eé]tage|au\s+\d+(?:[eè]me|er|e)\b|rdc|rdj|rez[- ]de[- ]chauss[eé]e|rez[- ]de[- ]jardin|r\+[1-9])\b",
+                blob_features,
+            )
             if m_et:
                 etage = m_et.group(1).capitalize()
 
         has_elevator = False
-        if getattr(raw, "complementary_details", None):
-            for cat, items in raw.complementary_details.items():
-                if any("ascenseur" in str(it).lower() for it in items):
-                    has_elevator = True
-        if not has_elevator and "ascenseur" in blob_features:
+        bathrooms: Optional[int] = None
+        comp_dict = getattr(raw, "complementary_details", None)
+        if isinstance(comp_dict, dict):
+            for cat, items in comp_dict.items():
+                if not isinstance(items, list):
+                    continue
+                cat_norm = normalize_text(str(cat))
+                for it in items:
+                    it_s = str(it).strip()
+                    it_norm = normalize_text(it_s)
+                    if "ascenseur" in it_norm and not re.search(r"(?:sans\s+ascenseur|ascenseur\s*:\s*non|\bnon\b)", it_norm):
+                        has_elevator = True
+                    if "clim" in it_norm and not re.search(r"\bnon\b", it_norm):
+                        has_ac = True
+                    if "piscine" in it_norm and not re.search(r"\b(non|piscinable)\b", it_norm):
+                        has_pool = True
+                    if any(w in it_norm for w in ("vue mer", "vue lagon", "vue baie")) and not re.search(r"\bnon\b", it_norm):
+                        has_sea_view = True
+                    if bathrooms is None and any(w in it_norm for w in ("salle d'eau", "salle d eau", "salle de bain", "salles de bain", "sdb", "sde")):
+                        m_b = re.search(r"(\d+)", it_norm)
+                        if m_b:
+                            b_val = int(m_b.group(1))
+                            if 1 <= b_val <= 15:
+                                bathrooms = b_val
+                    if surface_terrain is None and ("terrain" in it_norm or "parcelle" in it_norm):
+                        m_ta = re.search(r"(\d+(?:[\.,]\d+)?)\s*ares?", it_norm)
+                        m_tm = re.search(r"(\d+(?:[\s\.,]\d+)?)\s*m2", it_norm)
+                        if m_ta:
+                            try:
+                                surface_terrain = float(m_ta.group(1).replace(",", ".")) * 100.0
+                            except ValueError:
+                                pass
+                        elif m_tm:
+                            raw_t = m_tm.group(1).strip()
+                            try:
+                                surface_terrain = float(raw_t.replace(",", ".")) if re.match(r"^\d+[\.,]\d{1,2}$", raw_t) else float(re.sub(r"[^\d]", "", raw_t))
+                            except ValueError:
+                                pass
+                    if surface_terrasse is None and ("terrasse" in it_norm or "varangue" in it_norm):
+                        m_tr = re.search(r"(\d+(?:[\.,]\d+)?)\s*m2", it_norm)
+                        if m_tr:
+                            try:
+                                surface_terrasse = float(m_tr.group(1).replace(",", "."))
+                            except ValueError:
+                                pass
+                    if parkings is None and ("parking" in cat_norm or "garage" in cat_norm or "stationnement" in cat_norm):
+                        m_pk = re.search(r"(\d+)", it_norm)
+                        if m_pk:
+                            p_v = int(m_pk.group(1))
+                            if 1 <= p_v <= 20:
+                                parkings = p_v
+                    if charges is None and ("charge" in it_norm or "financ" in cat_norm):
+                        m_ch = re.search(r"charges?[^0-9]{0,20}(\d[\d\s\.,]*)", it_norm)
+                        if m_ch:
+                            raw_cs = re.sub(r"[.,]\d{1,2}\s*$", "", m_ch.group(1).strip())
+                            clean_cs = re.sub(r"[^\d]", "", raw_cs)
+                            if clean_cs and 500 <= int(clean_cs) <= 150_000:
+                                charges = int(clean_cs)
+
+        if not has_elevator and "ascenseur" in blob_norm and not re.search(r"\b(?:sans\s+ascenseur|pas\s+d['’]?ascenseur|ascenseur\s*:\s*non)\b", blob_norm):
             has_elevator = True
+        if "ascenseur" in raw_facs:
+            has_elevator = True
+
+        # Extraction salles de bain depuis le texte si non trouvé dans complementary_details
+        if bathrooms is None and prop_type not in (PropertyType.TERRAIN, PropertyType.DOCK):
+            m_sdb = re.search(r"\b([1-9])\s*(?:salles?\s*d['’]eau|salles?\s*de\s*bains?|sdb|sde)\b", blob_norm)
+            if m_sdb:
+                bathrooms = int(m_sdb.group(1))
 
         # Détails complémentaires JSON
         comp_details_json = None
@@ -517,6 +655,7 @@ class ListingCleaner:
             surface_terrasse_m2=surface_terrasse,
             rooms=rooms,
             bedrooms=bedrooms,
+            bathrooms=bathrooms,
             parkings=parkings,
             parking_detail=parking_detail,
             etage=etage,

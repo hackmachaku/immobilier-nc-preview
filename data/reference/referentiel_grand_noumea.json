@@ -34,8 +34,8 @@
           "secteur": "Sud Presqu'île",
           "standing": "Premium",
           "description": "Presqu'île résidentielle bordée par la baie de Sainte-Marie",
-          "latitude": -22.2850,
-          "longitude": 166.4730
+          "latitude": -22.285,
+          "longitude": 166.473
         },
         {
           "nom": "N'Géa",
@@ -91,7 +91,7 @@
           "standing": "Intermédiaire",
           "description": "Résidentiel central proche collèges/lycées et cliniques",
           "latitude": -22.288,
-          "longitude": 166.450
+          "longitude": 166.45
         },
         {
           "nom": "Trianon",
@@ -154,8 +154,8 @@
           "secteur": "Nord Est",
           "standing": "Intermédiaire",
           "description": "Périphérie nord vers le col de la Pirogue",
-          "latitude": -22.222,
-          "longitude": 166.488
+          "latitude": -22.227,
+          "longitude": 166.475
         },
         {
           "nom": "PK6",
@@ -179,7 +179,7 @@
           "standing": "Accessible",
           "description": "Quatrième kilomètre entre Vallée du Tir et Rivière Salée",
           "latitude": -22.248,
-          "longitude": 166.460
+          "longitude": 166.46
         },
         {
           "nom": "Portes de Fer",
@@ -194,7 +194,7 @@
           "secteur": "Est",
           "standing": "Intermédiaire",
           "description": "Hauteurs de Magenta avec vue dégagée vers la baie et les collines",
-          "latitude": -22.260,
+          "latitude": -22.26,
           "longitude": 166.468
         },
         {
@@ -211,7 +211,7 @@
           "standing": "Haut de gamme",
           "description": "Baie de l'Orphelinat, promenade et marina",
           "latitude": -22.285,
-          "longitude": 166.440
+          "longitude": 166.44
         },
         {
           "nom": "Nouville",
@@ -244,6 +244,78 @@
           "description": "Pointe nord résidentielle de la presqu'île de Ducos",
           "latitude": -22.238,
           "longitude": 166.425
+        },
+        {
+          "nom": "Sainte-Marie",
+          "secteur": "Est",
+          "standing": "Intermédiaire",
+          "description": "Quartier résidentiel bordant la baie de Sainte-Marie",
+          "latitude": -22.277,
+          "longitude": 166.469
+        },
+        {
+          "nom": "Montagne Coupée",
+          "secteur": "Centre Nord",
+          "standing": "Intermédiaire",
+          "description": "Secteur résidentiel central",
+          "latitude": -22.256,
+          "longitude": 166.453
+        },
+        {
+          "nom": "Numbo",
+          "secteur": "Presqu-île Ducos",
+          "standing": "Activité / Résidentiel",
+          "description": "Secteur Numbo Ducos",
+          "latitude": -22.24,
+          "longitude": 166.412
+        },
+        {
+          "nom": "Receiving",
+          "secteur": "Sud",
+          "standing": "Haut de gamme",
+          "description": "Quartier résidentiel central calme proche Motor Pool",
+          "latitude": -22.288,
+          "longitude": 166.457
+        },
+        {
+          "nom": "Logicoop",
+          "secteur": "Nord Ouest",
+          "standing": "Accessible",
+          "description": "Quartier résidentiel Ducos Logicoop",
+          "latitude": -22.248,
+          "longitude": 166.43
+        },
+        {
+          "nom": "Doniambo",
+          "secteur": "Centre Ouest",
+          "standing": "Industriel / Activité",
+          "description": "Secteur industriel et portuaire",
+          "latitude": -22.256,
+          "longitude": 166.434
+        },
+        {
+          "nom": "Vallée du Génie",
+          "secteur": "Centre",
+          "standing": "Intermédiaire",
+          "description": "Secteur central proche Vallée des Colons",
+          "latitude": -22.266,
+          "longitude": 166.447
+        },
+        {
+          "nom": "Mont Vénus",
+          "secteur": "Est",
+          "standing": "Intermédiaire",
+          "description": "Colline résidentielle entre Magenta et Sainte-Marie",
+          "latitude": -22.275,
+          "longitude": 166.464
+        },
+        {
+          "nom": "Moselle",
+          "secteur": "Centre",
+          "standing": "Intermédiaire",
+          "description": "Port Moselle et centre-ville",
+          "latitude": -22.274,
+          "longitude": 166.441
         }
       ]
     },
@@ -313,8 +385,48 @@
           "secteur": "Dumbéa Nord",
           "standing": "Pavillonnaire / Nature",
           "description": "Plaine résidentielle verdoyante et calme le long de la rivière",
-          "latitude": -22.160,
+          "latitude": -22.16,
           "longitude": 166.465
+        },
+        {
+          "nom": "ZAC Panda",
+          "secteur": "Dumbéa Centre",
+          "standing": "Intermédiaire / Activité",
+          "description": "Zone mixte résidentielle et commerciale ZAC Panda",
+          "latitude": -22.189,
+          "longitude": 166.453
+        },
+        {
+          "nom": "Apogoti",
+          "secteur": "Dumbéa Sud Côtier",
+          "standing": "Intermédiaire",
+          "description": "Lotissement résidentiel proche Médipôle",
+          "latitude": -22.192,
+          "longitude": 166.438
+        },
+        {
+          "nom": "Les Koghis",
+          "secteur": "Dumbéa Est",
+          "standing": "Pavillonnaire / Montagne",
+          "description": "Lotissements verdoyants au pied des monts Koghis",
+          "latitude": -22.177,
+          "longitude": 166.482
+        },
+        {
+          "nom": "Pointe à la Dorade",
+          "secteur": "Dumbéa Côtier",
+          "standing": "Pavillonnaire",
+          "description": "Secteur littoral Dumbéa-sur-Mer",
+          "latitude": -22.18,
+          "longitude": 166.436
+        },
+        {
+          "nom": "Pic aux Chèvres",
+          "secteur": "Dumbéa Sud",
+          "standing": "Intermédiaire",
+          "description": "Quartier résidentiel récent Dumbéa-sur-Mer",
+          "latitude": -22.195,
+          "longitude": 166.446
         }
       ]
     },
@@ -337,7 +449,7 @@
           "standing": "Intermédiaire / Historique",
           "description": "Église de la Conception, secteur résidentiel",
           "latitude": -22.2226,
-          "longitude": 166.5000
+          "longitude": 166.5
         },
         {
           "nom": "Yahoué",
@@ -368,7 +480,7 @@
           "secteur": "Mont-Dore Sud",
           "standing": "Pavillonnaire",
           "description": "Secteur résidentiel le long du littoral",
-          "latitude": -22.2300,
+          "latitude": -22.23,
           "longitude": 166.5293
         },
         {
@@ -376,7 +488,7 @@
           "secteur": "Mont-Dore Sud",
           "standing": "Pavillonnaire Littoral",
           "description": "Zone côtière verdoyante face au Mont-Dore",
-          "latitude": -22.2660,
+          "latitude": -22.266,
           "longitude": 166.5725
         },
         {
@@ -394,6 +506,22 @@
           "description": "Extrémité sud, source d'eau du Mont-Dore",
           "latitude": -22.2719,
           "longitude": 166.6282
+        },
+        {
+          "nom": "Mont-Dore Sud",
+          "secteur": "Mont-Dore Sud",
+          "standing": "Pavillonnaire Littoral",
+          "description": "Secteur résidentiel sud du Mont-Dore",
+          "latitude": -22.262,
+          "longitude": 166.565
+        },
+        {
+          "nom": "Saint-Louis",
+          "secteur": "Mont-Dore Centre",
+          "standing": "Accessible",
+          "description": "Secteur Saint-Louis",
+          "latitude": -22.238,
+          "longitude": 166.55
         }
       ]
     },
@@ -448,14 +576,14 @@
           "standing": "Rural / Verdoyant",
           "description": "Propriétés sur grands terrains au pied de la montagne",
           "latitude": -22.098,
-          "longitude": 166.350
+          "longitude": 166.35
         },
         {
           "nom": "Tontouta",
           "secteur": "Païta Nord",
           "standing": "Aéroport / Pavillonnaire",
           "description": "Secteur aéroport international et lotissements de La Tontouta",
-          "latitude": -22.020,
+          "latitude": -22.02,
           "longitude": 166.215
         },
         {
@@ -463,8 +591,88 @@
           "secteur": "Païta Côtier",
           "standing": "Lotissement Littoral",
           "description": "Lotissement maritime et résidentiel bord de mer",
-          "latitude": -22.140,
+          "latitude": -22.14,
           "longitude": 166.305
+        },
+        {
+          "nom": "Domaine de Nouré",
+          "secteur": "Païta Sud",
+          "standing": "Intermédiaire / Moderne",
+          "description": "Éco-quartier résidentiel proche Savannah",
+          "latitude": -22.162,
+          "longitude": 166.404
+        },
+        {
+          "nom": "Karikaté",
+          "secteur": "Païta Côtier",
+          "standing": "Pavillonnaire / Littoral",
+          "description": "Secteur littoral Karikaté",
+          "latitude": -22.155,
+          "longitude": 166.336
+        },
+        {
+          "nom": "Nétéa",
+          "secteur": "Païta Centre",
+          "standing": "Pavillonnaire",
+          "description": "Lotissement résidentiel Nétéa",
+          "latitude": -22.142,
+          "longitude": 166.374
+        },
+        {
+          "nom": "Les 3 Vallées",
+          "secteur": "Païta Sud",
+          "standing": "Pavillonnaire",
+          "description": "Lotissement résidentiel Les 3 Vallées",
+          "latitude": -22.147,
+          "longitude": 166.382
+        },
+        {
+          "nom": "Arboréa",
+          "secteur": "Païta Sud",
+          "standing": "Pavillonnaire",
+          "description": "Lotissement Arboréa",
+          "latitude": -22.15,
+          "longitude": 166.392
+        },
+        {
+          "nom": "Zico",
+          "secteur": "Païta Sud",
+          "standing": "Activité / Résidentiel",
+          "description": "Zone industrielle et résidentielle de Païta",
+          "latitude": -22.141,
+          "longitude": 166.396
+        },
+        {
+          "nom": "Tiaré",
+          "secteur": "Païta Nord",
+          "standing": "Rural / Littoral",
+          "description": "Secteur Tiaré",
+          "latitude": -22.104,
+          "longitude": 166.283
+        },
+        {
+          "nom": "Ondémia",
+          "secteur": "Païta Nord",
+          "standing": "Rural / Pavillonnaire",
+          "description": "Secteur Ondémia / Port Laguerre",
+          "latitude": -22.116,
+          "longitude": 166.322
+        },
+        {
+          "nom": "Tamoa",
+          "secteur": "Païta Nord",
+          "standing": "Rural / Littoral",
+          "description": "Secteur Tamoa",
+          "latitude": -22.078,
+          "longitude": 166.258
+        },
+        {
+          "nom": "Nogouta",
+          "secteur": "Païta Centre",
+          "standing": "Pavillonnaire",
+          "description": "Lotissement Nogouta",
+          "latitude": -22.126,
+          "longitude": 166.342
         }
       ]
     }

@@ -39,6 +39,7 @@ from src.processing.description_structurer import (
 )
 from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
 from src.domain.agencies_directory import NC_AGENCIES
+from src.storage.database import _DB_LOCK
 from src.utils.logger import get_logger
 
 logger = get_logger("ai_enricher")
@@ -158,10 +159,43 @@ def get_ai_config() -> Dict[str, Any]:
     return default_cfg
 
 
+ALLOWED_AI_CONFIG_KEYS = {
+    "provider",
+    "model",
+    "temperature",
+    "timeout_seconds",
+    "active_preset",
+    "system_prompt",
+    "presets",
+    "ollama_url",
+}
+
+
 def save_ai_config(new_config: Dict[str, Any]) -> Dict[str, Any]:
-    """Sauvegarde les paramètres IA."""
+    """Sauvegarde les paramètres IA (liste blanche stricte + protection anti-SSRF sur ollama_url)."""
     cfg = get_ai_config()
-    cfg.update(new_config)
+    if isinstance(new_config, dict):
+        for k, v in new_config.items():
+            if k not in ALLOWED_AI_CONFIG_KEYS:
+                continue
+            if k == "ollama_url":
+                url_str = str(v or "").strip()
+                if not re.match(r"^https?://(?:localhost|127\.0\.0\.1)(?::\d{2,5})?(?:/.*)?$", url_str, re.IGNORECASE):
+                    logger.warning(f"Rejet d'une ollama_url non-locale (anti-SSRF) : {url_str}")
+                    continue
+                cfg[k] = url_str
+            elif k == "temperature":
+                try:
+                    cfg[k] = max(0.0, min(1.5, float(v)))
+                except (ValueError, TypeError):
+                    continue
+            elif k == "timeout_seconds":
+                try:
+                    cfg[k] = max(5.0, min(180.0, float(v)))
+                except (ValueError, TypeError):
+                    continue
+            else:
+                cfg[k] = v
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
@@ -216,24 +250,9 @@ def init_ai_cache_table():
         import duckdb
         if not DB_PATH.exists():
             return
-        con = duckdb.connect(str(DB_PATH))
-        con.execute("""
-        CREATE TABLE IF NOT EXISTS listing_ai_enrichment (
-            listing_id VARCHAR PRIMARY KEY,
-            model_version VARCHAR,
-            enriched_at TIMESTAMP,
-            input_hash VARCHAR,
-            extracted_contacts_json VARCHAR,
-            structured_sections_json VARCHAR,
-            raw_response_json VARCHAR,
-            latency_ms INTEGER
-        );
-        """)
-        cols = [c[1] for c in con.execute("PRAGMA table_info('listing_ai_enrichment');").fetchall()]
-        if "enriched_at" not in cols:
-            con.execute("DROP TABLE listing_ai_enrichment;")
+        with _DB_LOCK, duckdb.connect(str(DB_PATH)) as con:
             con.execute("""
-            CREATE TABLE listing_ai_enrichment (
+            CREATE TABLE IF NOT EXISTS listing_ai_enrichment (
                 listing_id VARCHAR PRIMARY KEY,
                 model_version VARCHAR,
                 enriched_at TIMESTAMP,
@@ -244,7 +263,21 @@ def init_ai_cache_table():
                 latency_ms INTEGER
             );
             """)
-        con.close()
+            cols = [c[1] for c in con.execute("PRAGMA table_info('listing_ai_enrichment');").fetchall()]
+            if "enriched_at" not in cols:
+                con.execute("DROP TABLE listing_ai_enrichment;")
+                con.execute("""
+                CREATE TABLE listing_ai_enrichment (
+                    listing_id VARCHAR PRIMARY KEY,
+                    model_version VARCHAR,
+                    enriched_at TIMESTAMP,
+                    input_hash VARCHAR,
+                    extracted_contacts_json VARCHAR,
+                    structured_sections_json VARCHAR,
+                    raw_response_json VARCHAR,
+                    latency_ms INTEGER
+                );
+                """)
     except Exception as e:
         logger.warning(f"Erreur init_ai_cache_table : {e}")
 
@@ -256,14 +289,12 @@ def get_ai_cache_stats() -> Dict[str, Any]:
         if not DB_PATH.exists():
             return {"cached_count": 0, "status": "no_db"}
         init_ai_cache_table()
-        con = duckdb.connect(str(DB_PATH), read_only=True)
-        tables = con.execute("SHOW TABLES").fetchall()
-        table_names = [t[0] for t in tables]
-        if "listing_ai_enrichment" not in table_names:
-            con.close()
-            return {"cached_count": 0, "status": "empty"}
-        row = con.execute("SELECT COUNT(*), MAX(enriched_at) FROM listing_ai_enrichment").fetchone()
-        con.close()
+        with _DB_LOCK, duckdb.connect(str(DB_PATH), read_only=True) as con:
+            tables = con.execute("SHOW TABLES").fetchall()
+            table_names = [t[0] for t in tables]
+            if "listing_ai_enrichment" not in table_names:
+                return {"cached_count": 0, "status": "empty"}
+            row = con.execute("SELECT COUNT(*), MAX(enriched_at) FROM listing_ai_enrichment").fetchone()
         return {
             "cached_count": row[0] if row else 0,
             "last_enriched_at": str(row[1]) if row and row[1] else None,
@@ -280,9 +311,8 @@ def clear_ai_cache() -> bool:
         if not DB_PATH.exists():
             return True
         init_ai_cache_table()
-        con = duckdb.connect(str(DB_PATH))
-        con.execute("DELETE FROM listing_ai_enrichment;")
-        con.close()
+        with _DB_LOCK, duckdb.connect(str(DB_PATH)) as con:
+            con.execute("DELETE FROM listing_ai_enrichment;")
         return True
     except Exception as e:
         logger.warning(f"Erreur clear_ai_cache : {e}")
@@ -295,14 +325,13 @@ def _get_cached_enrichment(listing_id: str, input_hash: str) -> Optional[Dict[st
         import duckdb
         if not DB_PATH.exists():
             return None
-        con = duckdb.connect(str(DB_PATH), read_only=True)
-        row = con.execute("""
-            SELECT model_version, enriched_at, extracted_contacts_json, 
-                   structured_sections_json, raw_response_json, latency_ms 
-            FROM listing_ai_enrichment 
-            WHERE listing_id = ? AND input_hash = ?
-        """, [listing_id, input_hash]).fetchone()
-        con.close()
+        with _DB_LOCK, duckdb.connect(str(DB_PATH), read_only=True) as con:
+            row = con.execute("""
+                SELECT model_version, enriched_at, extracted_contacts_json, 
+                       structured_sections_json, raw_response_json, latency_ms 
+                FROM listing_ai_enrichment 
+                WHERE listing_id = ? AND input_hash = ?
+            """, [listing_id, input_hash]).fetchone()
         if row:
             raw_resp = json.loads(row[4]) if row[4] else {}
             return {
@@ -327,7 +356,7 @@ def _save_cached_enrichment(listing_id: str, model: str, input_hash: str,
     try:
         import duckdb
         init_ai_cache_table()
-        with duckdb.connect(str(DB_PATH)) as con:
+        with _DB_LOCK, duckdb.connect(str(DB_PATH)) as con:
             con.execute("""
                 INSERT OR REPLACE INTO listing_ai_enrichment 
                 (listing_id, model_version, enriched_at, input_hash, extracted_contacts_json, structured_sections_json, raw_response_json, latency_ms)
@@ -721,8 +750,12 @@ def enrich_listing_with_ai(
 
     input_hash = hashlib.sha256(f"{raw_text}_{prop_type}_{system_prompt}".encode()).hexdigest()
 
+    # Ne jamais polluer la base DuckDB avec des tests éphémères du Playground
+    is_playground_id = listing_id.startswith(("text_", "custom_"))
+    effective_persist = persist_cache and not is_playground_id
+
     # Vérification du cache si non forcé
-    if not force_refresh:
+    if not force_refresh and not is_playground_id:
         cached = _get_cached_enrichment(listing_id, input_hash)
         if cached:
             cached["provider_used"] = "duckdb_cache"
@@ -848,7 +881,7 @@ def enrich_listing_with_ai(
         tok_s = round((tokens_generated / (latency_ms / 1000.0)), 1) if latency_ms > 0 and tokens_generated > 0 else 0
         provider_used = f"Ollama ({model})"
         fallback_tier1 = False
-        if persist_cache:
+        if effective_persist:
             _save_cached_enrichment(listing_id, model, input_hash, direct_contacts, sections, ai_result, latency_ms)
     else:
         # Repli robuste et garanti Tier-1 déterministe
@@ -869,7 +902,7 @@ def enrich_listing_with_ai(
         latency_ms = t1_ms if latency_ms < 50 else latency_ms
         provider_used = "Tier-1 Déterministe (Regex & Heuristiques Calédoniennes)"
         fallback_tier1 = (provider not in ("deterministic", "heuristic_fallback"))
-        if persist_cache and provider in ("deterministic", "heuristic_fallback"):
+        if effective_persist and provider in ("deterministic", "heuristic_fallback"):
             _save_cached_enrichment(listing_id, "Tier-1 Déterministe", input_hash, direct_contacts, sections, ai_result, latency_ms)
 
     return {
@@ -1014,14 +1047,13 @@ def batch_enrich_listings(
         return {"success": False, "error": f"Base de données introuvable : {DB_PATH}"}
 
     if force_all:
+        # Utilise INSERT OR REPLACE sans vider destructivement le cache existant (sécurise en cas d'annulation)
         only_missing = False
-        clear_ai_cache()
 
     cfg = get_ai_config()
     effective_provider = (custom_provider or cfg.get("provider", "ollama")).lower()
 
     init_ai_cache_table()
-    con = duckdb.connect(str(DB_PATH), read_only=True)
 
     where_parts = ["is_active = TRUE", "description IS NOT NULL", "length(trim(description)) > 10"]
     if only_missing:
@@ -1037,12 +1069,10 @@ def batch_enrich_listings(
         {limit_clause}
     """
     try:
-        df = con.execute(query).df()
+        with _DB_LOCK, duckdb.connect(str(DB_PATH), read_only=True) as con:
+            df = con.execute(query).df()
     except Exception as e:
-        con.close()
         return {"success": False, "error": f"Erreur requête SQL : {e}"}
-    finally:
-        con.close()
 
     total = len(df)
     if progress_callback:
@@ -1070,7 +1100,7 @@ def batch_enrich_listings(
                     "latency_ms"
                 ]
             )
-            with duckdb.connect(str(DB_PATH)) as wcon:
+            with _DB_LOCK, duckdb.connect(str(DB_PATH)) as wcon:
                 wcon.register("batch_df", batch_df)
                 wcon.execute(
                     """

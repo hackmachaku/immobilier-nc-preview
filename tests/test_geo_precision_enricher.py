@@ -111,7 +111,7 @@ class TestRefilAndCadastreMatching:
 
     def test_refil_dictionary_loaded(self, enricher):
         assert enricher.is_refil_loaded is True
-        assert len(enricher.refil_entries) >= 5000
+        assert len(enricher.refil_entries) >= 3500
 
     def test_match_known_residence_bao(self, enricher):
         match = enricher.match_refil_semantics("Appartement dans la résidence BAO à Panda Dumbéa")

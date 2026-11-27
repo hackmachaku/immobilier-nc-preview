@@ -1,11 +1,14 @@
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Any
+import threading
 import duckdb
 import pandas as pd
 
 from src.config.settings import DB_PATH, PROCESSED_DATA_DIR
 from src.models.listing import RawListing, CleanedListing
+
+_DB_LOCK = threading.RLock()
 
 
 class PropertyDatabase:
@@ -14,9 +17,7 @@ class PropertyDatabase:
         self.read_only = read_only
         # Assurer que le dossier parent existe
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.read_only and not self.db_path.exists():
-            self._init_schema()
-        elif not self.read_only:
+        if not self.read_only:
             self._init_schema()
 
     def get_connection(self, read_only: Optional[bool] = None) -> duckdb.DuckDBPyConnection:
@@ -198,9 +199,9 @@ class PropertyDatabase:
                 "direct_phone": getattr(l, "direct_phone", None),
             })
 
-        df = pd.DataFrame(records)
+        df = pd.DataFrame(records).drop_duplicates(subset=["id"], keep="last")
 
-        with self.get_connection() as con:
+        with _DB_LOCK, self.get_connection(read_only=False) as con:
             con.register("staging_df", df)
 
             # 1. Analyse des variations de prix par rapport aux données existantes
@@ -230,7 +231,7 @@ class PropertyDatabase:
                     })
                 else:
                     old_p = ex.get("price_xpf")
-                    if old_p is not None and not pd.isna(old_p) and int(old_p) != l.price_xpf:
+                    if old_p is not None and not pd.isna(old_p) and int(old_p) > 0 and int(old_p) != l.price_xpf:
                         diff_xpf = l.price_xpf - int(old_p)
                         diff_pct = round((diff_xpf / int(old_p)) * 100, 2)
                         ev_type = "PRICE_DROP" if diff_xpf < 0 else "PRICE_INCREASE"
@@ -310,15 +311,19 @@ class PropertyDatabase:
                 direct_phone = COALESCE(EXCLUDED.direct_phone, listings.direct_phone);
             """)
 
-    def query(self, sql: str) -> pd.DataFrame:
-        """Exécute une requête SQL personnalisée et renvoie un DataFrame."""
-        with self.get_connection(read_only=True) as con:
-            return con.execute(sql).df()
+    def query(self, sql: str, params: Optional[List[Any]] = None) -> pd.DataFrame:
+        """Exécute une requête SQL paramétrée de manière thread-safe et renvoie un DataFrame."""
+        with _DB_LOCK:
+            with self.get_connection(read_only=True) as con:
+                if params is not None:
+                    return con.execute(sql, params).df()
+                return con.execute(sql).df()
 
     def get_market_summary(self) -> pd.DataFrame:
         """Retourne la synthèse des prix par quartier et type d'opération."""
-        with self.get_connection(read_only=True) as con:
-            return con.execute("""
-            SELECT * FROM v_marche_par_quartier 
-            ORDER BY commune, transaction_type, total_annonces DESC
-            """).df()
+        with _DB_LOCK:
+            with self.get_connection(read_only=True) as con:
+                return con.execute("""
+                SELECT * FROM v_marche_par_quartier 
+                ORDER BY commune, transaction_type, total_annonces DESC
+                """).df()

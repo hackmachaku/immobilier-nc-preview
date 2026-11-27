@@ -101,8 +101,11 @@ class LiveNCScraper:
     def parse_item_to_raw_listing(self, item: Dict[str, Any], default_source: str = "immobilier.nc") -> Optional[RawListing]:
         """Convertit un objet JSON issu de l'API NC en RawListing standardisé."""
         try:
-            item_id = str(item.get("id"))
-            if not item_id:
+            raw_id = item.get("id")
+            if raw_id is None:
+                return None
+            item_id = str(raw_id).strip()
+            if not item_id or item_id.lower() == "none":
                 return None
 
             # 1. Localisation
@@ -116,13 +119,25 @@ class LiveNCScraper:
             location_str = f"{commune_name} - {quartier_name}".strip(" -")
 
             # 2. Détection du type de transaction (Vente vs Location)
+            # Priorité stricte à deal_type_api quand il est fourni par l'API (évite que "loyer/bail" dans un bien de rendement en vente bascule en Location)
             deal_type_api = str(item.get("deal_type") or "").strip().lower()
             desc = item.get("description") or ""
             blob = f"{desc} {item.get('title') or ''}".lower()
-            has_loc_words = bool(re.search(r"\b(location|louer|loyer|f/mois|charges comprises|bail)\b", blob))
-            has_vente_words = bool(re.search(r"\b(vente|vendre|achat|acheter|prix fai)\b", blob))
+            blob_no_invest = re.sub(
+                r"\b(id[ée]al\s*(?:pour\s*)?investiss\w*|rentabilit[ée]\s*locative|rapport\s*locatif|actuellement\s*lou[ée]|vendu\s*lou[ée]|loyer\s*(?:actuel|mensuel\s*per[çc]u)|bail\s*en\s*cours)\b",
+                " ",
+                blob,
+            )
+            has_loc_words = bool(re.search(r"\b(location|louer|loyer|f/mois|charges comprises|bail)\b", blob_no_invest))
+            has_vente_words = bool(re.search(r"\b(vente|vendre|achat|acheter|prix fai|millions?|\bmf\b)\b", blob))
 
-            if deal_type_api == "location" or (has_loc_words and not has_vente_words):
+            if deal_type_api == "location":
+                is_location = True
+                transaction_type_declared = "Location"
+            elif deal_type_api == "vente":
+                is_location = False
+                transaction_type_declared = "Vente"
+            elif has_loc_words and not has_vente_words:
                 is_location = True
                 transaction_type_declared = "Location"
             else:
@@ -143,20 +158,21 @@ class LiveNCScraper:
                             price_int = int(p_val)
                         price_str = f"{price_int} F CFP/mois"
                     else:
-                        # Pour une vente :
+                        # Pour une vente (l'API renvoie parfois des milliers, ex: 39500 -> 39 500 000 F)
                         if p_val < 1000:
                             price_int = int(p_val * 1_000_000)
                         elif p_val >= 1_000_000:
                             price_int = int(p_val)
+                        elif deal_type_api == "vente" or has_vente_words:
+                            # Vente confirmée exprimée en milliers de XPF (ex: 39500 => 39.5M F)
+                            price_int = int(p_val * 1_000)
+                        elif has_loc_words:
+                            is_location = True
+                            transaction_type_declared = "Location"
+                            price_int = int(p_val)
+                            price_str = f"{price_int} F CFP/mois"
                         else:
-                            if has_loc_words:
-                                is_location = True
-                                transaction_type_declared = "Location"
-                                price_int = int(p_val)
-                                price_str = f"{price_int} F CFP/mois"
-                            else:
-                                price_int = int(p_val * 1_000)
-                                price_str = f"{price_int} F CFP"
+                            price_int = int(p_val * 1_000)
                         if not price_str:
                             price_str = f"{price_int} F CFP"
                 except (ValueError, TypeError):
@@ -292,13 +308,16 @@ class LiveNCScraper:
     def parse_yatoo_item_to_raw_listing(self, item: Dict[str, Any], category: str = "ventes-immobilieres") -> Optional[RawListing]:
         """Convertit une petite annonce Yatoo.nc en RawListing standardisé."""
         try:
-            item_id = str(item.get("id"))
-            if not item_id:
+            raw_id = item.get("id")
+            if raw_id is None:
+                return None
+            item_id = str(raw_id).strip()
+            if not item_id or item_id.lower() == "none":
                 return None
 
             title = str(item.get("title") or "Annonce Immobilière Yatoo").strip()
             desc = str(item.get("description") or "").strip()
-            town = str(item.get("town") or "Nouméa").strip()
+            town = str(item.get("town") or "").strip()
             raw_price = item.get("price")
             is_loc = "locat" in category.lower() or "louer" in title.lower() or "loyer" in desc.lower()
 
@@ -311,19 +330,21 @@ class LiveNCScraper:
                 except (ValueError, TypeError):
                     price_str = str(raw_price)
 
-            # Photos Yatoo
+            # Photos Yatoo (photos + media fallback)
             photos = item.get("photos") or []
+            media_items = item.get("media") or []
             photo_urls = []
-            if photos and isinstance(photos, list):
-                for p in photos:
-                    if isinstance(p, dict):
-                        u = str(p.get("contentUrl") or "").strip()
-                        if not u:
-                            thumbs = p.get("thumbnail") or []
-                            if thumbs and isinstance(thumbs, list) and isinstance(thumbs[0], dict):
-                                u = str(thumbs[0].get("contentUrl") or "").strip()
-                        if u and u.startswith("http") and u not in photo_urls:
-                            photo_urls.append(u)
+            for p in (photos if isinstance(photos, list) else []) + (media_items if isinstance(media_items, list) else []):
+                if isinstance(p, dict):
+                    u = str(p.get("contentUrl") or p.get("url") or p.get("src") or "").strip()
+                    if not u:
+                        thumbs = p.get("thumbnail") or []
+                        if thumbs and isinstance(thumbs, list) and isinstance(thumbs[0], dict):
+                            u = str(thumbs[0].get("contentUrl") or "").strip()
+                    if u and u.startswith("http") and u not in photo_urls:
+                        photo_urls.append(u)
+                elif isinstance(p, str) and p.strip().startswith("http") and p.strip() not in photo_urls:
+                    photo_urls.append(p.strip())
 
             photo_url = photo_urls[0] if photo_urls else ""
             images_json = json.dumps(photo_urls) if photo_urls else None
@@ -402,8 +423,11 @@ class LiveNCScraper:
     def parse_immonc_geo_item_to_raw_listing(self, item: Dict[str, Any], deal_type: str = "vente") -> Optional[RawListing]:
         """Convertit un élément cartographique Immo.nc en RawListing standardisé."""
         try:
-            item_id = str(item.get("id_annonce"))
-            if not item_id:
+            raw_id = item.get("id_annonce")
+            if raw_id is None:
+                return None
+            item_id = str(raw_id).strip()
+            if not item_id or item_id.lower() == "none":
                 return None
 
             lib_bien = str(item.get("lib_bien") or "").strip()
@@ -423,18 +447,18 @@ class LiveNCScraper:
             url = item.get("property_url") or f"https://www.immonc.com/annonce/{deal_type}/{item_id}"
 
             lower_ident = f"{title} {url}".lower()
-            if any(k in lower_ident for k in ["villa", "maison"]):
+            if any(k in lower_ident for k in ["commercial", "bureau", "local", "commerce"]):
+                prop_type = "Local commercial"
+            elif "dock" in lower_ident or "entrepot" in lower_ident:
+                prop_type = "Dock"
+            elif "terrain" in lower_ident:
+                prop_type = "Terrain"
+            elif "immeuble" in lower_ident:
+                prop_type = "Immeuble"
+            elif any(k in lower_ident for k in ["villa", "maison"]):
                 prop_type = "Maison"
             elif any(k in lower_ident for k in ["appartement", "f1", "f2", "f3", "f4", "studio"]):
                 prop_type = "Appartement"
-            elif "terrain" in lower_ident:
-                prop_type = "Terrain"
-            elif "dock" in lower_ident or "entrepot" in lower_ident:
-                prop_type = "Dock"
-            elif "immeuble" in lower_ident:
-                prop_type = "Immeuble"
-            elif any(k in lower_ident for k in ["commercial", "bureau", "local"]):
-                prop_type = "Local commercial"
             else:
                 prop_type = "Autre"
 
@@ -444,7 +468,12 @@ class LiveNCScraper:
                 text_blob=f"{title} {loc_str}"
             )
 
-            desc = f"Annonce {title} à {loc_str}. Contact: {item.get('partenaires')} (Tél: {item.get('tel', '')}, Email: {item.get('email', '')})."
+            partenaire_txt = str(item.get("partenaires") or agency or "Agence").strip()
+            tel_txt = str(item.get("tel") or "").strip()
+            email_txt = str(item.get("email") or "").strip()
+            contact_bits = [b for b in (f"Tél: {tel_txt}" if tel_txt else "", f"Email: {email_txt}" if email_txt else "") if b]
+            contact_suffix = f" ({', '.join(contact_bits)})" if contact_bits else ""
+            desc = f"Annonce {title} à {loc_str}. Contact: {partenaire_txt}{contact_suffix}."
 
             return RawListing(
                 source="immonc",
@@ -656,18 +685,18 @@ class LiveNCScraper:
             images_json = json.dumps(photos) if photos else None
 
             lower_ident = f"{title} {url}".lower()
-            if any(k in lower_ident for k in ["villa", "maison"]):
+            if any(k in lower_ident for k in ["commercial", "bureau", "local", "commerce"]):
+                prop_type = "Local commercial"
+            elif "dock" in lower_ident or "entrepot" in lower_ident:
+                prop_type = "Dock"
+            elif "terrain" in lower_ident:
+                prop_type = "Terrain"
+            elif "immeuble" in lower_ident:
+                prop_type = "Immeuble"
+            elif any(k in lower_ident for k in ["villa", "maison"]):
                 prop_type = "Maison"
             elif any(k in lower_ident for k in ["appartement", "f1", "f2", "f3", "f4", "studio"]):
                 prop_type = "Appartement"
-            elif "terrain" in lower_ident:
-                prop_type = "Terrain"
-            elif "dock" in lower_ident or "entrepot" in lower_ident:
-                prop_type = "Dock"
-            elif "immeuble" in lower_ident:
-                prop_type = "Immeuble"
-            elif any(k in lower_ident for k in ["commercial", "bureau", "local"]):
-                prop_type = "Local commercial"
             else:
                 lower_desc = desc.lower()
                 if any(k in lower_desc for k in ["villa", "maison"]):
@@ -910,9 +939,11 @@ class LiveNCScraper:
             all_raw_listings.extend(immonc_listings)
 
         if source_filter:
+            norm_filter = source_filter.lower().strip().replace("_", ".")
             all_raw_listings = [
                 rl for rl in all_raw_listings
-                if source_filter.lower() in rl.source.lower()
+                if norm_filter in rl.source.lower().replace("_", ".")
+                or rl.source.lower().replace("_", ".") in norm_filter
             ]
 
         logger.info(f"Total annonces brutes collectées prêtes pour ETL : {len(all_raw_listings)}")

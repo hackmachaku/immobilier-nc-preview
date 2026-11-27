@@ -146,8 +146,8 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
                 m_et = re.search(r"[eé]tage\s*[:\s]?\s*(\d+|rdc|rez[- ]de[- ]chauss[eé]e)", it, re.IGNORECASE)
                 if m_et:
                     etage = m_et.group(1).strip()
-                # Ascenseur
-                if "ascenseur" in it.lower():
+                # Ascenseur (exclure 'sans ascenseur' et 'Ascenseur : Non')
+                if "ascenseur" in it.lower() and not re.search(r"(?:sans\s+ascenseur|ascenseur\s*:\s*non|\bnon\b)", it, re.IGNORECASE):
                     has_elevator = True
 
         # Informations financières (retrait des décimales .00 avant extraction des chiffres pour éviter x100)
@@ -216,15 +216,15 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
         if m_et_text:
             etage = m_et_text.group(1)
 
-    if not has_sea_view and ("vue mer" in blob_full or "vue lagon" in blob_full or "vue dégagée" in blob_full):
+    if not has_sea_view and re.search(r"\b(vue\s*mer|vue\s*lagon|vue\s*baie|front\s*de\s*mer|bord\s*de\s*mer)\b", blob_full):
         has_sea_view = True
-    if not has_ac and ("climatis" in blob_full or "clim" in blob_full):
+    if not has_ac and re.search(r"\b(climatis\w*|climatiseur\w*|clims?)\b", blob_full):
         has_ac = True
-    if not has_pool and ("piscine" in blob_full or "bassin" in blob_full):
+    if not has_pool and re.search(r"\b(piscine|bassin\s+de\s+nage|couloir\s+de\s+nage)\b", blob_full) and not re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non)\b", blob_full):
         has_pool = True
-    if not is_secured and ("s[eé]curis" in blob_full or "digicode" in blob_full or "gardien" in blob_full):
+    if not is_secured and re.search(r"\b(s[eé]curis\w*|digicode|gardien|interphone|visiophone)\b", blob_full):
         is_secured = True
-    if not has_elevator and "ascenseur" in blob_full:
+    if not has_elevator and "ascenseur" in blob_full and not re.search(r"\b(sans\s+ascenseur|pas\s+d['’]ascenseur|ascenseur\s*:\s*non)\b", blob_full):
         has_elevator = True
 
     if parkings is None:

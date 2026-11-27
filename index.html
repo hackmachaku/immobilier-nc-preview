@@ -5,9 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Veille Immo NC Sentinel • Multi-Sources & Découverte Continue</title>
   <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
-  <!-- Leaflet CSS & JS pour la carte interactive (Rendu GPU Canvas Haute Performance) -->
+  <!-- Leaflet CSS & JS + MarkerCluster pour la carte interactive (Anti-superposition & 60 FPS) -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
   <style>
     :root {
       --background: #0b1329;
@@ -89,6 +92,23 @@
       margin: 6px 0 !important;
     }
     /* Cluster Badges pour fluidité 60 FPS */
+    .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large {
+      background-color: rgba(14, 165, 233, 0.35) !important;
+    }
+    .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div {
+      background-color: rgba(15, 23, 42, 0.92) !important;
+      color: #38bdf8 !important;
+      border: 2px solid #0ea5e9 !important;
+      font-weight: 800 !important;
+      font-size: 11px !important;
+    }
+    .marker-cluster-large {
+      background-color: rgba(245, 158, 11, 0.35) !important;
+    }
+    .marker-cluster-large div {
+      color: #fbbf24 !important;
+      border-color: #f59e0b !important;
+    }
     /* Tooltip Parcelle Cadastrale Éclatante */
     .parcel-tooltip {
       background: #0f172a !important;
@@ -358,6 +378,7 @@
             <option value="Dumbéa">Dumbéa</option>
             <option value="Mont-Dore">Le Mont-Dore</option>
             <option value="Païta">Païta</option>
+            <option value="Autre">🌴 Brousse & Autres Communes (Koné, Bourail, Koumac…)</option>
           </select>
 
           <!-- FILTRE TYPOLOGIE (F1, F2, F3, F4, F5+) -->
@@ -643,11 +664,11 @@
           <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div>
               <div class="flex items-center gap-2">
-                <span class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5">
-                  <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                  SYSTÈME SAIN • HEALTHY (0 ERREUR)
+                <span id="integrityStatusBadge" class="px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-slate-800 text-slate-300 border border-slate-700 flex items-center gap-1.5">
+                  <span class="w-1.5 h-1.5 rounded-full bg-sky-400"></span>
+                  DIAGNOSTIC EN ATTENTE DE LECTURE API
                 </span>
-                <span class="text-xs text-slate-400 font-mono">Dernier audit : Aujourd'hui (DuckDB + Logs)</span>
+                <span id="integrityLastAudit" class="text-xs text-slate-400 font-mono">Cliquez sur « Contrôler l'intégrité »</span>
               </div>
               <h3 class="text-sm font-bold text-white mt-1 flex items-center gap-2">
                 🛡️ Contrôle d'Intégrité & Journal d'Exécution des Scripts
@@ -667,36 +688,25 @@
           <div class="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
             <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
               <span class="text-slate-400 text-[11px] block">Statut Pipeline</span>
-              <span class="text-emerald-400 font-bold text-sm">Opérationnel (100%)</span>
+              <span id="integrityPipelineStatus" class="text-sky-400 font-bold text-sm">À vérifier</span>
             </div>
             <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
               <span class="text-slate-400 text-[11px] block">Données DuckDB</span>
-              <span class="text-white font-bold text-sm">14 annonces vérifiées</span>
+              <span id="integrityDbCount" class="text-white font-bold text-sm">—</span>
             </div>
             <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
-              <span class="text-slate-400 text-[11px] block">Valeurs Nulles (Prix/Surf)</span>
-              <span class="text-emerald-400 font-bold text-sm">0 null (100% propres)</span>
+              <span class="text-slate-400 text-[11px] block">Qualité Prix/Surfaces</span>
+              <span id="integrityQualityPct" class="text-slate-300 font-bold text-sm">—</span>
             </div>
             <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800">
               <span class="text-slate-400 text-[11px] block">Erreurs d'exécution</span>
-              <span class="text-emerald-400 font-bold text-sm">0 erreur / 0 alerte</span>
+              <span id="integrityErrorsCount" class="text-slate-300 font-bold text-sm">—</span>
             </div>
           </div>
 
           <!-- LOGS TERMINAL (VISIBLE) -->
           <div id="logsTerminalContainer" class="p-3.5 rounded-xl bg-slate-950 border border-slate-800 font-mono text-[11px] text-slate-300 max-h-56 overflow-y-auto custom-scrollbar space-y-1">
-            <div class="text-emerald-400">=== DEMARRAGE DU PIPELINE IMMOBILIER DU GRAND NOUMEA ===</div>
-            <div class="text-slate-400">[ingestion:process_and_store] Démarrage du traitement par lot 'pilot' : 14 annonces brutes reçues.</div>
-            <div class="text-slate-400">[ingestion:save_raw_batch] Archive brute sauvegardée (14 annonces) : raw_listings_pilot_20260909_220221.jsonl</div>
-            <div class="text-slate-400">[ingestion:process_and_store] Traitement terminé avec succès : 14 annonces nettoyées et enrichies, 0 rejetées, upsert DuckDB validé.</div>
-            <div class="text-slate-400">[pipeline_main:main] Ingestion pilote terminée : 14 annonces insérées/mises à jour.</div>
-            <div class="text-slate-400">[pipeline_main:main] Rapport de synthèse du marché affiché.</div>
-            <div class="text-slate-400">[pipeline_main:main] Analyse statistique et détection d'opportunités terminées.</div>
-            <div class="text-slate-400">[pipeline_main:main] Carte interactive HTML du Grand Nouméa générée.</div>
-            <div class="text-slate-400">[pipeline_main:main] Démonstration du moteur AVM terminée.</div>
-            <div class="text-slate-400">[pipeline_main:main] Simulation financière d'investissement terminée.</div>
-            <div class="text-emerald-400 font-bold">[pipeline_main:main] Audit complet réalisé : Statut=HEALTHY, Erreurs=0, Vues fonctionnelles=14 lignes.</div>
-            <div class="text-emerald-400">=== EXECUTION DU PIPELINE TERMINEE AVEC SUCCES (CODE 0) ===</div>
+            <div class="text-slate-400">[sentinel] En attente des journaux d'exécution réels depuis le serveur local (/api/logs)...</div>
           </div>
         </div>
       </div>
@@ -1123,7 +1133,7 @@
               <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
                 <span class="text-[11px] text-slate-400 block">2. Mensualité de prêt :</span>
                 <span class="text-sm font-bold text-amber-400" id="simMensualitePret">-162 400 F</span>
-                <span class="text-[10px] text-slate-500 block">Assurance comprise</span>
+                <span class="text-[10px] text-slate-500 block">Hors assurance emprunteur</span>
               </div>
 
               <div class="p-3 rounded-xl bg-slate-900/90 border border-slate-800">
@@ -1211,6 +1221,14 @@
             <button onclick="toggleMapQuartiers()" id="btnMapQuartiers" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-slate-300 hover:text-white hover:bg-slate-700 transition-all flex items-center gap-1.5 border border-slate-700">
               <span id="mapQuartiersIcon">🏙️</span>
               <span>Repères Quartiers</span>
+            </button>
+            <button onclick="toggleCadastreOverlay()" id="btnMapCadastre" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-amber-300 hover:text-white hover:bg-amber-700/40 transition-all flex items-center gap-1.5 border border-amber-500/40" title="Afficher les limites parcellaires officielles cadastre.gouv.nc">
+              <span>🏛️</span>
+              <span>Cadastre NC</span>
+            </button>
+            <button onclick="zoomMapAllNC()" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-slate-800 text-emerald-300 hover:text-white hover:bg-emerald-700/40 transition-all flex items-center gap-1.5 border border-emerald-500/40" title="Centrer la carte sur toute la Nouvelle-Calédonie (Grand Nouméa + Brousse)">
+              <span>🏝️</span>
+              <span>Vue NC / Brousse</span>
             </button>
           </div>
 
@@ -2039,11 +2057,12 @@
     }
 
     function testFbConnection() {
-      const profilePath = document.getElementById('fbProfilePath').value;
+      const profilePath = (document.getElementById('fbProfilePath')?.value || '').trim();
       showNotificationToast(
-        "Vérification du profil local Chrome",
-        `Session détectée (${profilePath}) !\nL'agent Sentinel peut accéder à Facebook et aux groupes NC.`,
-        "info"
+        "Connecteur Facebook NC (Mode Manuel / CLI)",
+        `La vérification automatique du profil local (${profilePath || 'non renseigné'}) n'est pas exécutée depuis le navigateur pour des raisons de sécurité. Utilisez les liens directs Groupes Publics dans l'onglet Colocation ou le collecteur Playwright en local.`,
+        "info",
+        7000
       );
     }
 
@@ -2056,10 +2075,12 @@
       const list = document.getElementById('fbGroupsList');
       const card = document.createElement('div');
       card.className = "p-3 rounded-xl bg-slate-900 border border-slate-800 flex items-center justify-between";
+      const safeName = escapeHtmlUi(gName);
+      const safeUrl = escapeHtmlUi(gUrl);
       card.innerHTML = `
         <div>
-          <h4 class="text-xs font-bold text-white">${gName}</h4>
-          <p class="text-[11px] text-slate-400 truncate max-w-xs">${gUrl}</p>
+          <h4 class="text-xs font-bold text-white">${safeName}</h4>
+          <p class="text-[11px] text-slate-400 truncate max-w-xs">${safeUrl}</p>
           <span class="text-[10px] text-emerald-400">Ajouté • Prêt pour le prochain scan</span>
         </div>
         <span class="px-2 py-1 rounded bg-slate-800 text-[10px] text-slate-300">Groupe FB</span>
@@ -2277,20 +2298,49 @@
     let isScanning = false;
 
     function getApiBase() {
-      return (window.location.protocol === 'file:' || window.location.hostname === '') ? 'http://localhost:8080' : '';
+      return (window.location.protocol === 'file:' || window.location.hostname === '') ? 'http://127.0.0.1:8080' : '';
+    }
+
+    function escapeHtmlUi(str) {
+      return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function getStoredManualListings() {
+      try {
+        const raw = localStorage.getItem('sentinel_manual_listings');
+        const parsed = raw ? JSON.parse(raw) : [];
+        return Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        return [];
+      }
+    }
+
+    function saveStoredManualListings(list) {
+      try {
+        localStorage.setItem('sentinel_manual_listings', JSON.stringify(list || []));
+      } catch (e) {}
     }
 
     async function loadLiveBackendData() {
+      const apiBase = getApiBase();
       try {
         // 1. Charge les annonces réelles (API REST locale ou snapshot statique cloud)
-        let resListings = await fetch('/api/listings').catch(() => null);
+        let resListings = await fetch(`${apiBase}/api/listings`).catch(() => null);
         if (!resListings || !resListings.ok) {
           resListings = await fetch('./data_listings.json').catch(() => null);
         }
         if (resListings && resListings.ok) {
           const jsonListings = await resListings.json();
           if (jsonListings.success && jsonListings.data && jsonListings.data.length > 0) {
-            listingsData = jsonListings.data;
+            const manualStored = getStoredManualListings();
+            const existingIds = new Set(jsonListings.data.map(x => x.id));
+            const uniqueManual = manualStored.filter(m => m && m.id && !existingIds.has(m.id));
+            listingsData = [...uniqueManual, ...jsonListings.data];
             populateAgencyFilterOptions();
             filterListings();
             if (leafletMapInstance) {
@@ -2301,7 +2351,7 @@
         }
 
         // 2. Charge les statistiques des sources
-        let resSources = await fetch('/api/sources').catch(() => null);
+        let resSources = await fetch(`${apiBase}/api/sources`).catch(() => null);
         if (!resSources || !resSources.ok) {
           resSources = await fetch('./data_sources.json').catch(() => null);
         }
@@ -2315,7 +2365,7 @@
         }
 
         // 2b. Charge l'annuaire des 52 agences
-        let resAgencies = await fetch('/api/agencies').catch(() => null);
+        let resAgencies = await fetch(`${apiBase}/api/agencies`).catch(() => null);
         if (!resAgencies || !resAgencies.ok) {
           resAgencies = await fetch('./data_agencies.json').catch(() => null);
         }
@@ -2327,7 +2377,7 @@
           }
         }
 
-        // 3. Charge les logs réels si serveur en ligne
+        // 3. Charge les logs réels et l'audit si serveur en ligne
         await loadRealLogs();
       } catch (err) {
         console.warn("[Sentinelle] Mode autonome (données locales par défaut):", err);
@@ -2336,7 +2386,7 @@
 
     async function loadRealLogs() {
       try {
-        const resLogs = await fetch('/api/logs');
+        const resLogs = await fetch(`${getApiBase()}/api/logs`);
         if (resLogs.ok) {
           const jsonLogs = await resLogs.json();
           if (jsonLogs.success && jsonLogs.logs) {
@@ -2347,7 +2397,7 @@
                 const isWarn = l.includes('WARNING');
                 const isSucc = l.includes('succès') || l.includes('HEALTHY') || l.includes('TERMINEE');
                 const cls = isErr ? 'text-red-400 font-bold' : (isWarn ? 'text-amber-400' : (isSucc ? 'text-emerald-400' : 'text-slate-400'));
-                return `<div class="${cls}">${l}</div>`;
+                return `<div class="${cls}">${escapeHtmlUi(l)}</div>`;
               }).join('');
               term.scrollTop = term.scrollHeight;
             }
@@ -2383,7 +2433,7 @@
         statusDetail.textContent = `Téléchargement de ${selectedPages * 25} annonces & traitement ETL en cours...`;
 
         // APPEL RÉEL À L'API BACKEND PYTHON (Multi-pages)
-        const resp = await fetch('/api/refresh', {
+        const resp = await fetch(`${getApiBase()}/api/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ pages: selectedPages })
@@ -2443,7 +2493,7 @@
       statusDetail.textContent = `Scan réel en direct ciblé sur ${name}...`;
 
       try {
-        const resp = await fetch('/api/refresh', {
+        const resp = await fetch(`${getApiBase()}/api/refresh`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ source: id, pages: 1 })
@@ -2490,28 +2540,56 @@
 
     async function runAuditCheckUI() {
       appendTerminalLog(`[${new Date().toLocaleTimeString('fr-FR')}] [auditor] Lancement du diagnostic d'intégrité DuckDB + logs...`);
+      const badgeEl = document.getElementById('integrityStatusBadge');
+      const lastEl = document.getElementById('integrityLastAudit');
+      const pipeEl = document.getElementById('integrityPipelineStatus');
+      const dbEl = document.getElementById('integrityDbCount');
+      const qualEl = document.getElementById('integrityQualityPct');
+      const errEl = document.getElementById('integrityErrorsCount');
       try {
-        const resp = await fetch('/api/audit');
+        const resp = await fetch(`${getApiBase()}/api/audit`);
         if (resp.ok) {
           const res = await resp.json();
-          const aud = res.audit;
+          const aud = res.audit || {};
           const db = aud.database_summary || {};
           const lg = aud.logs_summary || {};
-          appendTerminalLog(`[${new Date().toLocaleTimeString('fr-FR')}] [auditor] Contrôle validé : ${db.total_listings} annonces en base, ${lg.error_count} erreurs.`);
+          const totalAct = db.active_listings || db.total_listings || 0;
+          const errCount = lg.error_count ?? 0;
+          const qualPct = db.data_quality ? db.data_quality.valid_m2_ratio_pct : null;
+          const isHealthy = String(aud.status || '').toUpperCase() === 'HEALTHY' && errCount === 0;
+
+          if (badgeEl) {
+            badgeEl.className = isHealthy
+              ? "px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center gap-1.5"
+              : "px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5";
+            badgeEl.innerHTML = `<span class="w-1.5 h-1.5 rounded-full ${isHealthy ? 'bg-emerald-400 animate-pulse' : 'bg-amber-400'}"></span> ${escapeHtmlUi(aud.status || 'VERIFIÉ')} (${errCount} ERREUR${errCount > 1 ? 'S' : ''})`;
+          }
+          if (lastEl) lastEl.textContent = `Audit réel exécuté à ${new Date().toLocaleTimeString('fr-FR')}`;
+          if (pipeEl) { pipeEl.textContent = aud.status || 'OK'; pipeEl.className = isHealthy ? 'text-emerald-400 font-bold text-sm' : 'text-amber-400 font-bold text-sm'; }
+          if (dbEl) dbEl.textContent = `${totalAct.toLocaleString('fr-FR')} annonces actives`;
+          if (qualEl) qualEl.textContent = qualPct !== null ? `${qualPct}% surfaces valides` : 'Vérifié';
+          if (errEl) { errEl.textContent = `${errCount} erreur(s)`; errEl.className = errCount === 0 ? 'text-emerald-400 font-bold text-sm' : 'text-rose-400 font-bold text-sm'; }
+
+          appendTerminalLog(`[${new Date().toLocaleTimeString('fr-FR')}] [auditor] Contrôle validé : ${totalAct} annonces en base, ${errCount} erreurs.`);
           showNotificationToast(
             "Contrôle d'Intégrité Réel (DuckDB + Logs)",
-            `• Statut : ${aud.status}\n• Annonces actives : ${db.active_listings || db.total_listings}\n• Erreurs détectées : ${lg.error_count}\n• Qualité des surfaces & prix : ${db.data_quality ? db.data_quality.valid_m2_ratio_pct : 100}%\n• Vues analytiques : Opérationnelles`,
-            "success",
+            `• Statut : ${aud.status}\n• Annonces actives : ${totalAct}\n• Erreurs détectées : ${errCount}\n• Qualité des surfaces : ${qualPct !== null ? qualPct + '%' : 'N/C'}`,
+            isHealthy ? "success" : "info",
             7000
           );
           return;
         }
       } catch (e) {}
+      if (badgeEl) {
+        badgeEl.className = "px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1.5";
+        badgeEl.textContent = "MODE STATIQUE • SERVEUR LOCAL HORS LIGNE";
+      }
+      if (pipeEl) { pipeEl.textContent = "Hors ligne (statique)"; pipeEl.className = "text-amber-400 font-bold text-sm"; }
       showNotificationToast(
-        "Contrôle d'Intégrité du Pipeline",
-        "• Statut : HEALTHY (Sain)\n• Données DuckDB : Opérationnelles\n• Erreurs : 0",
-        "info",
-        5000
+        "Audit impossible (Serveur local hors ligne)",
+        "Le diagnostic en direct nécessite le serveur Python local (server.py). Les données affichées proviennent du dernier snapshot statique.",
+        "error",
+        6000
       );
     }
 
@@ -2638,6 +2716,9 @@
       };
 
       listingsData.unshift(newListing);
+      const storedManual = getStoredManualListings();
+      storedManual.unshift(newListing);
+      saveStoredManualListings(storedManual);
       closeManualModal();
       document.getElementById('manualForm').reset();
       switchTab('veille');
@@ -2663,9 +2744,11 @@
           event.currentTarget.classList.add('active', 'bg-sky-500', 'text-white');
           event.currentTarget.classList.remove('bg-slate-800', 'text-slate-300');
         }
-        // Si l'utilisateur clique sur Colocations, adapter automatiquement l'échelle de budget aux loyers mensuels
-        if (value === 'colocation' && priceScaleMode !== 'LOCATION') {
-          priceScaleMode = 'LOCATION';
+        // Adapter automatiquement l'échelle de budget : loyers pour Colocations, retour VENTE sinon
+        const transVal = document.getElementById('transactionFilter')?.value || 'all';
+        const targetScale = (value === 'colocation' || transVal === 'LOCATION' || transVal === 'COLOCATION') ? 'LOCATION' : 'VENTE';
+        if (priceScaleMode !== targetScale) {
+          priceScaleMode = targetScale;
           const cfg = PRICE_CONFIGS[priceScaleMode];
           const minSlider = document.getElementById('priceMinSlider');
           const maxSlider = document.getElementById('priceMaxSlider');
@@ -2719,6 +2802,23 @@
       if (type === 'all') {
         oppSelect.value = 'all';
         activeCategory = 'all';
+        const transSel = document.getElementById('transactionFilter');
+        const commSel = document.getElementById('communeFilter');
+        const agSel = document.getElementById('agencyFilter');
+        const rtSel = document.getElementById('roomTypeFilter');
+        const furnSel = document.getElementById('furnishedFilter');
+        const precSel = document.getElementById('precisionFilter');
+        if (transSel) transSel.value = 'all';
+        if (commSel) commSel.value = 'all';
+        if (agSel) agSel.value = 'all';
+        if (rtSel) rtSel.value = 'all';
+        if (furnSel) furnSel.value = 'all';
+        if (precSel) precSel.value = 'all';
+        priceScaleMode = 'VENTE';
+        priceFilterMin = 0;
+        priceFilterMax = null;
+        activePricePreset = 'all';
+        updatePriceSliderUI();
         document.querySelectorAll('.category-btn').forEach((btn, idx) => {
           if (idx === 0) {
             btn.classList.add('active', 'bg-sky-500', 'text-white');
@@ -3020,7 +3120,7 @@
       let filtered = listingsData.filter(item => {
         const matchesCategory = activeCategory === 'all' || (activeCategory === 'colocation' ? item.isColocation === true : item.category === activeCategory);
         const itemCommune = normStr(item.commune);
-        const matchesCommune = commune === 'all' || itemCommune.includes(commune) || commune.includes(itemCommune);
+        const matchesCommune = commune === 'all' || (itemCommune.length > 0 && (itemCommune.includes(commune) || commune.includes(itemCommune)));
         const itemTrans = item.transactionType || (item.isLocation ? 'LOCATION' : 'VENTE');
         const matchesTransaction = transaction === 'all' || (transaction === 'COLOCATION' ? item.isColocation === true : itemTrans === transaction);
         
@@ -3167,8 +3267,8 @@
         if (sort === 'price_asc') return a.currentPrice - b.currentPrice;
         if (sort === 'price_desc') return b.currentPrice - a.currentPrice;
         if (sort === 'drop_desc') {
-          const dropA = (a.initialPrice - a.currentPrice) / a.initialPrice;
-          const dropB = (b.initialPrice - b.currentPrice) / b.initialPrice;
+          const dropA = a.initialPrice > 0 ? (a.initialPrice - a.currentPrice) / a.initialPrice : 0;
+          const dropB = b.initialPrice > 0 ? (b.initialPrice - b.currentPrice) / b.initialPrice : 0;
           return dropB - dropA;
         }
         return new Date(b.dateAdded) - new Date(a.dateAdded);
@@ -3177,6 +3277,9 @@
       currentFilteredListings = filtered;
       renderCurrentPageListings();
       updateKPIs();
+      if (leafletMapInstance) {
+        renderMapMarkers();
+      }
     }
 
     function renderCurrentPageListings() {
@@ -3344,28 +3447,34 @@
 
       grid.innerHTML = items.map(item => {
         const isLoc = Boolean(item.isLocation || item.transactionType === 'LOCATION');
-        const hasDropped = item.currentPrice < item.initialPrice;
+        const hasDropped = item.initialPrice > 0 && item.currentPrice < item.initialPrice;
+        const hasIncreased = item.initialPrice > 0 && item.currentPrice > item.initialPrice;
         const dropAmount = item.initialPrice - item.currentPrice;
-        const dropPercent = item.initialPrice > 0 ? Math.round((dropAmount / item.initialPrice) * 100) : 0;
+        const dropPercent = item.initialPrice > 0 ? Math.round((Math.abs(dropAmount) / item.initialPrice) * 100) : 0;
 
         const transBadge = isLoc 
           ? `<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-indigo-500/25 text-indigo-200 border border-indigo-500/40 flex items-center gap-1 backdrop-blur-md shadow-sm">🔑 Location</span>`
           : `<span class="px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-500/25 text-emerald-200 border border-emerald-500/40 flex items-center gap-1 backdrop-blur-md shadow-sm">🏡 Vente</span>`;
 
-        const dropDisplay = dropAmount >= 1000000
-          ? `-${(dropAmount/1000000).toFixed(1)}M`
-          : `-${(dropAmount/1000).toFixed(0)}k F`;
+        const dropDisplay = Math.abs(dropAmount) >= 1000000
+          ? `${dropAmount >= 0 ? '-' : '+'}${(Math.abs(dropAmount)/1000000).toFixed(1)}M`
+          : `${dropAmount >= 0 ? '-' : '+'}${(Math.abs(dropAmount)/1000).toFixed(0)}k F`;
 
         let badgeHtml = '';
         if (item.isManual) {
           badgeHtml = `<span class="px-2.5 py-0.5 text-[11px] font-bold rounded-lg badge-manual flex items-center gap-1 shadow-md whitespace-nowrap backdrop-blur-md">✍️ Manuel</span>`;
         } else if (item.status === 'new') {
           badgeHtml = `<span class="px-2.5 py-0.5 text-[11px] font-bold rounded-lg badge-new flex items-center gap-1 shadow-md whitespace-nowrap backdrop-blur-md">🟢 Nouveau</span>`;
-        } else if (item.status === 'price_drop') {
+        } else if (hasDropped) {
           badgeHtml = `
             <span class="px-2.5 py-0.5 text-[11px] font-black rounded-lg badge-down flex items-center gap-1 shadow-md whitespace-nowrap backdrop-blur-md" title="Baisse constatée : -${dropPercent}% (${dropDisplay})">
               <span>📉 -${dropPercent}%</span>
               <span class="text-[10px] font-semibold opacity-90 tracking-tight">(${dropDisplay})</span>
+            </span>`;
+        } else if (hasIncreased) {
+          badgeHtml = `
+            <span class="px-2.5 py-0.5 text-[11px] font-bold rounded-lg bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 shadow-md whitespace-nowrap backdrop-blur-md" title="Hausse constatée : +${dropPercent}% (${dropDisplay})">
+              <span>📈 +${dropPercent}%</span>
             </span>`;
         } else {
           badgeHtml = `<span class="px-2.5 py-0.5 text-[11px] font-medium rounded-lg bg-slate-900/80 text-slate-300 border border-slate-700/80 shadow-md whitespace-nowrap backdrop-blur-md">⚖️ Stable</span>`;
@@ -3374,8 +3483,12 @@
         let categoryTag = '';
         if (item.category === 'dock_industriel') {
           categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-amber-500/20 text-amber-300 border border-amber-500/30 backdrop-blur-md">🏭 Dock</span>`;
+        } else if (item.category === 'terrain') {
+          categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-lime-500/20 text-lime-300 border border-lime-500/30 backdrop-blur-md">🌾 Terrain</span>`;
+        } else if (item.category === 'local_commercial') {
+          categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-violet-500/20 text-violet-300 border border-violet-500/30 backdrop-blur-md">🏬 Local & Bureau</span>`;
         } else if (item.category === 'maison_riviere_mer') {
-          categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 backdrop-blur-md">🌊 Rivière & Mer</span>`;
+          categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 backdrop-blur-md">🌊 Villa Vue Mer</span>`;
         } else if (item.category === 'appartement') {
           categoryTag = `<span class="px-2 py-0.5 rounded text-[11px] font-medium bg-blue-500/20 text-blue-300 border border-blue-500/30 backdrop-blur-md">🏢 Appartement</span>`;
         } else {
@@ -3442,9 +3555,18 @@
                   ${categoryTag}
                   ${roomBadge}
                   ${furnishedBadge}
-                  ${item.isAiEnriched ? `
-                    <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/30 text-purple-200 border border-purple-400/40 backdrop-blur-md shadow-sm flex items-center gap-1" title="Annonce analysée et structurée par l'IA locale (${item.aiModelName || 'Qwen 2.5'})">
-                      🤖 IA
+                  ${item.isLlmEnriched ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold bg-purple-500/30 text-purple-200 border border-purple-400/40 backdrop-blur-md shadow-sm flex items-center gap-1" title="Annonce analysée et structurée par l'IA LLM (${item.aiModelName || 'Ollama'})">
+                      🤖 IA LLM
+                    </span>
+                  ` : (item.isAiEnriched ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-sky-500/25 text-sky-200 border border-sky-400/40 backdrop-blur-md shadow-sm flex items-center gap-1" title="Fiche structurée par le moteur déterministe Canonique v4">
+                      ⚡ Structuré
+                    </span>
+                  ` : '')}
+                  ${item.isDefaultImage ? `
+                    <span class="px-1.5 py-0.5 rounded text-[9.5px] font-medium bg-slate-900/85 text-slate-300 border border-slate-700/80 backdrop-blur-md" title="Aucune photo publiée sur le portail source — visuel générique">
+                      📷 Illustration
                     </span>
                   ` : ''}
                   ${item.precisionBadge ? `
@@ -3506,11 +3628,17 @@
                     <span class="line-through text-slate-400">${item.initialPrice >= 1000000 ? (item.initialPrice/1000000).toFixed(1) + 'M' : Math.round(item.initialPrice/1000) + 'k'}</span>
                     <span class="text-emerald-400 font-bold">➔ ${item.currentPrice >= 1000000 ? (item.currentPrice/1000000).toFixed(1) + 'M F' : item.currentPrice.toLocaleString('fr-FR') + ' F'}${isLoc ? '/m' : ''} (-${dropPercent}%)</span>
                   </div>
+                ` : (hasIncreased ? `
+                  <div class="text-[11px] text-amber-300 mt-1.5 flex items-center gap-1.5 bg-amber-950/40 px-2 py-1 rounded-lg border border-amber-800/50">
+                    <span class="text-amber-400/80">Trajectoire :</span>
+                    <span class="text-slate-400">${item.initialPrice >= 1000000 ? (item.initialPrice/1000000).toFixed(1) + 'M' : Math.round(item.initialPrice/1000) + 'k'}</span>
+                    <span class="text-amber-300 font-bold">➔ ${item.currentPrice >= 1000000 ? (item.currentPrice/1000000).toFixed(1) + 'M F' : item.currentPrice.toLocaleString('fr-FR') + ' F'}${isLoc ? '/m' : ''} (+${dropPercent}%)</span>
+                  </div>
                 ` : `
                   <div class="text-[11px] text-slate-400 mt-1.5 flex items-center gap-1.5 bg-slate-900/50 px-2 py-1 rounded-lg border border-slate-800/60">
                     <span class="text-slate-400">Prix d'origine stable depuis mise en ligne</span>
                   </div>
-                `}
+                `)}
 
                 <!-- AI VERDICT BANNER -->
                 <div class="mt-2.5">
@@ -3593,12 +3721,16 @@
                 </div>
 
                 <div class="flex items-center gap-1.5 shrink-0">
-                  <a href="tel:${item.agencyPhone}" title="Appeler" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white transition-colors">
-                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
-                  </a>
-                  <a href="https://wa.me/${item.whatsapp}" target="_blank" rel="noopener noreferrer" title="WhatsApp" class="p-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-800/40 transition-colors">
-                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.007c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86.173.086.275.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.203c.043.072.043.419-.101.824z"/></svg>
-                  </a>
+                  ${(item.agencyPhone && item.agencyPhone !== 'Non renseigné') ? `
+                    <a href="tel:${item.agencyPhone}" title="Appeler" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white transition-colors">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                    </a>
+                  ` : ''}
+                  ${item.whatsapp ? `
+                    <a href="https://wa.me/${item.whatsapp}" target="_blank" rel="noopener noreferrer" title="WhatsApp" class="p-2 rounded-lg bg-emerald-950/60 hover:bg-emerald-600 text-emerald-400 hover:text-white border border-emerald-800/40 transition-colors">
+                      <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M12.031 6.172c-3.181 0-5.767 2.586-5.768 5.766-.001 1.298.38 2.27 1.019 3.287l-.582 2.128 2.182-.573c.978.58 1.911.928 3.145.929 3.178 0 5.767-2.587 5.768-5.766.001-3.187-2.575-5.771-5.764-5.771zm3.392 8.244c-.144.405-.837.774-1.17.824-.299.045-.677.063-1.092-.069-.252-.08-.575-.187-.988-.365-1.739-.751-2.874-2.502-2.961-2.617-.087-.116-.708-.94-.708-1.793s.448-1.273.607-1.446c.159-.173.346-.217.462-.217l.332.007c.106.005.249-.04.39.298.144.347.491 1.2.534 1.287.043.087.072.188.014.304-.058.116-.087.188-.173.289l-.26.304c-.087.086-.177.18-.076.354.101.174.449.741.964 1.201.662.591 1.221.774 1.394.86.173.086.275.072.376-.043.101-.116.433-.506.549-.68.116-.173.231-.145.39-.087s1.011.477 1.184.564.289.13.332.203c.043.072.043.419-.101.824z"/></svg>
+                    </a>
+                  ` : ''}
                   <!-- BOUTON SIMULATION (ADAPTÉ VENTE OU LOCATION) -->
                   ${isLoc ? `
                     <button onclick="prefillSimulation(${Math.round(item.currentPrice * 180)}, ${item.currentPrice})" class="px-2.5 py-1.5 rounded-lg bg-indigo-600/20 hover:bg-indigo-600/40 text-indigo-300 border border-indigo-500/30 text-xs font-semibold transition-all flex items-center gap-1" title="Simuler l'investissement locatif">
@@ -4040,11 +4172,16 @@
                   <div class="text-sm font-bold">Baisse constatée : -${dropPercent}%</div>
                   <div class="text-xs font-medium text-emerald-300/80">Économie : ${formatPriceXPF(dropAmount)}${isLoc ? '/mois' : ''}</div>
                 </div>
+              ` : (dropAmount < 0 ? `
+                <div class="px-3.5 py-2 rounded-xl bg-amber-500/10 border border-amber-500/25 text-amber-300 sm:text-right">
+                  <div class="text-sm font-bold">Hausse constatée : +${Math.abs(dropPercent)}%</div>
+                  <div class="text-xs font-medium text-amber-200/80">Écart : +${formatPriceXPF(Math.abs(dropAmount))}${isLoc ? '/mois' : ''}</div>
+                </div>
               ` : `
                 <div class="px-3 py-2 rounded-xl bg-slate-800/80 border border-slate-700 text-slate-300 text-xs">
                   Prix d'origine stable depuis publication
                 </div>
-              `}
+              `)}
             </div>
 
             ${dropAmount > 0 ? `
@@ -4214,11 +4351,15 @@
               <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-base">📝</span>
                 <h4 class="text-sm font-bold text-white">Descriptif & Caractéristiques du bien</h4>
-                ${item.isAiEnriched ? `
-                  <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1" title="Structuré sémantiquement par IA locale">
-                    <span>🤖</span> Enrichi IA (${item.aiModelName || 'Qwen 2.5'})
+                ${item.isLlmEnriched ? `
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-extrabold bg-purple-500/20 text-purple-300 border border-purple-500/30 flex items-center gap-1" title="Structuré sémantiquement par IA LLM locale">
+                    <span>🤖</span> Enrichi IA (${item.aiModelName || 'Ollama'})
                   </span>
-                ` : ''}
+                ` : (item.isAiEnriched ? `
+                  <span class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30 flex items-center gap-1" title="Fiche structurée par le moteur déterministe Canonique v4">
+                    <span>⚡</span> Structuré Canonique v4 (${item.aiModelName || 'Tier-1'})
+                  </span>
+                ` : '')}
               </div>
               <div class="flex items-center gap-2 flex-wrap">
                 <!-- Bouton 1-clic IA Enrichissement -->
@@ -4452,7 +4593,7 @@
                 <span class="font-bold text-slate-200 flex items-center gap-1.5">
                   📐 Urbanisme PUD (Plan d'Urbanisme Directeur)
                 </span>
-                <button onclick="loadPudDetailsForListing('${item.id}', '${item.commune}', '${item.quartier}', ${item.lat}, ${item.lon})" id="btnPud_${item.id}" class="text-[11px] font-semibold text-sky-400 hover:text-sky-300 hover:underline inline-flex items-center gap-1">
+                <button onclick="loadPudDetailsForListing('${escapeHtmlUi(item.id)}')" id="btnPud_${item.id}" class="text-[11px] font-semibold text-sky-400 hover:text-sky-300 hover:underline inline-flex items-center gap-1">
                   <span>Consulter les règles de zone</span>
                   <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
                 </button>
@@ -4516,7 +4657,9 @@
               <div class="space-y-1">
                 <p class="text-base font-bold text-white">${item.agencyName}</p>
                 <div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-300">
-                  <p>Tél agence : <a href="tel:${item.agencyPhone}" class="text-sky-400 hover:underline font-semibold">${item.agencyPhone}</a></p>
+                  ${(item.agencyPhone && item.agencyPhone !== 'Non renseigné')
+                    ? `<p>Tél agence : <a href="tel:${item.agencyPhone}" class="text-sky-400 hover:underline font-semibold">${item.agencyPhone}</a></p>`
+                    : `<p class="text-slate-400">Tél agence : <span class="italic">Non renseigné</span></p>`}
                   ${item.agencyEmail ? `<p>Email : <a href="mailto:${item.agencyEmail}" class="text-sky-400 hover:underline font-mono">${item.agencyEmail}</a></p>` : ''}
                 </div>
                 <p class="text-[11px] text-slate-400">Source : <strong>${item.source}</strong></p>
@@ -4532,9 +4675,11 @@
                 ` : ''}
               </div>
               <div class="flex flex-wrap gap-2">
-                <a href="tel:${item.agencyPhone}" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-all">
-                  📞 Appeler l'agence
-                </a>
+                ${(item.agencyPhone && item.agencyPhone !== 'Non renseigné') ? `
+                  <a href="tel:${item.agencyPhone}" class="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold transition-all">
+                    📞 Appeler l'agence
+                  </a>
+                ` : ''}
                 ${item.whatsapp ? `
                   <a href="https://wa.me/${item.whatsapp}" target="_blank" rel="noopener noreferrer" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold transition-all">
                     💬 WhatsApp Agence
@@ -4573,7 +4718,12 @@
       }
     }
 
-    function loadPudDetailsForListing(id, commune, quartier, lat, lon) {
+    function loadPudDetailsForListing(id) {
+      const item = listingsData.find(x => x.id === id) || {};
+      const commune = item.commune || '';
+      const quartier = item.quartier || '';
+      const lat = item.lat || 0;
+      const lon = item.lon || 0;
       const container = document.getElementById('pudDetails_' + id);
       const btn = document.getElementById('btnPud_' + id);
       if (!container) return;
@@ -4585,9 +4735,9 @@
       }
 
       container.classList.remove('hidden');
-      container.innerHTML = `<span class="text-sky-400 font-medium animate-pulse">Chargement des règles d'urbanisme officielles...</span>`;
+      container.innerHTML = `<span class="text-sky-400 font-medium animate-pulse">Chargement des règles d'urbanisme indicatives...</span>`;
 
-      fetch(`/api/cadastre/pud-rules?lat=${lat}&lon=${lon}&commune=${encodeURIComponent(commune || '')}&quartier=${encodeURIComponent(quartier || '')}`)
+      fetch(`${getApiBase()}/api/cadastre/pud-rules?lat=${lat}&lon=${lon}&commune=${encodeURIComponent(commune)}&quartier=${encodeURIComponent(quartier)}`)
         .then(res => res.json())
         .then(data => {
           if (data.success && data.pud) {
@@ -4861,8 +5011,9 @@
     function recalculateSimulation() {
       const prix = parseFloat(document.getElementById('simPrixAchat').value) || 0;
       const apport = parseFloat(document.getElementById('simApport').value) || 0;
-      const taux = parseFloat(document.getElementById('simTaux').value) || 4.2;
-      const duree = parseInt(document.getElementById('simDuree').value) || 20;
+      const rawTaux = parseFloat(document.getElementById('simTaux').value);
+      const taux = Number.isNaN(rawTaux) ? 4.2 : Math.max(0, rawTaux);
+      const duree = Math.max(1, parseInt(document.getElementById('simDuree').value) || 20);
       const loyer = parseFloat(document.getElementById('simLoyer').value) || 0;
       const avecAgence = document.getElementById('simGestionAgence').checked;
 
@@ -4903,8 +5054,9 @@
       document.getElementById('simDetailNotaire').textContent = `${notaire.toLocaleString('fr-FR')} F`;
       document.getElementById('simDetailTotal').textContent = `${totalProjet.toLocaleString('fr-FR')} F CFP`;
 
-      const stMensPlus1 = r > 0 ? Math.round(emprunt * (((taux+1)/1200) * Math.pow(1 + (taux+1)/1200, n)) / (Math.pow(1 + (taux+1)/1200, n) - 1)) : 0;
-      const surcoutTaux = stMensPlus1 - mensualite;
+      const rPlus1 = ((taux + 1) / 100.0) / 12.0;
+      const stMensPlus1 = emprunt > 0 ? Math.round(emprunt * (rPlus1 * Math.pow(1 + rPlus1, n)) / (Math.pow(1 + rPlus1, n) - 1)) : 0;
+      const surcoutTaux = Math.max(0, stMensPlus1 - mensualite);
       document.getElementById('simStressDesc').innerHTML = `
         • <strong>Si le bien reste vide 1 mois :</strong> Vous devez absorber un manque à gagner temporaire de ${loyer.toLocaleString('fr-FR')} F.<br/>
         • <strong>Si les banques montent les taux de +1% :</strong> Votre mensualité grimperait de +${surcoutTaux.toLocaleString('fr-FR')} F CFP / mois.
@@ -5127,9 +5279,28 @@
       // OpenStreetMap Standard activé par défaut
       osmStandardLayer.addTo(leafletMapInstance);
 
-      // Groupes de calques applicatifs
-      mapMarkersGroup = L.layerGroup().addTo(leafletMapInstance);
+      // Groupes de calques applicatifs (MarkerCluster pour désempiler les marqueurs superposés)
+      mapMarkersGroup = (typeof L.markerClusterGroup === 'function')
+        ? L.markerClusterGroup({
+            maxClusterRadius: 45,
+            spiderfyOnMaxZoom: true,
+            showCoverageOnHover: false,
+            zoomToBoundsOnClick: true,
+            chunkedLoading: true
+          }).addTo(leafletMapInstance)
+        : L.layerGroup().addTo(leafletMapInstance);
       mapQuartiersGroup = L.layerGroup().addTo(leafletMapInstance);
+
+      // Calque officiel Cadastre NC (limites parcellaires cadastre.gouv.nc — zoom >= 14)
+      window.cadastreParcellaireLayer = L.tileLayer.wms('https://cadastre.gouv.nc/arcgisServices/cadastreV3/cadastre_consult_v333/MapServer/WMSServer', {
+        layers: '7',
+        format: 'image/png',
+        transparent: true,
+        opacity: 0.75,
+        minZoom: 13,
+        maxZoom: 20,
+        attribution: '© DITTT / Cadastre NC'
+      });
 
       // Sélecteur de couches interactif ergonomique
       const baseMaps = {
@@ -5141,6 +5312,7 @@
 
       const overlayMaps = {
         "📍 Annonces Immobilières": mapMarkersGroup,
+        "🏛️ Cadastre NC (Parcelles, zoom ≥ 13)": window.cadastreParcellaireLayer,
         "🏷️ Secteurs & Quartiers": mapQuartiersGroup
       };
 
@@ -5148,6 +5320,27 @@
 
       updateMapLegend();
       renderMapMarkers();
+    }
+
+    function toggleCadastreOverlay() {
+      if (!leafletMapInstance || !window.cadastreParcellaireLayer) return;
+      const btn = document.getElementById('btnMapCadastre');
+      if (leafletMapInstance.hasLayer(window.cadastreParcellaireLayer)) {
+        leafletMapInstance.removeLayer(window.cadastreParcellaireLayer);
+        if (btn) btn.classList.remove('bg-amber-600', 'text-white');
+      } else {
+        window.cadastreParcellaireLayer.addTo(leafletMapInstance);
+        if (leafletMapInstance.getZoom() < 14) {
+          leafletMapInstance.setZoom(15);
+        }
+        if (btn) btn.classList.add('bg-amber-600', 'text-white');
+        showNotificationToast('🏛️ Cadastre NC activé', 'Les limites parcellaires cadastre.gouv.nc s\'affichent à partir du zoom 13.', 'info', 3500);
+      }
+    }
+
+    function zoomMapAllNC() {
+      if (!leafletMapInstance) return;
+      leafletMapInstance.fitBounds([[-22.55, 163.95], [-20.05, 167.25]], { padding: [20, 20] });
     }
 
     let currentParcelPolygonLayer = null;
@@ -5169,7 +5362,7 @@
 
       // 1. Essai prioritaire via API backend locale si disponible
       try {
-        const res = await fetch(`/api/cadastre/parcel-polygon?lat=${lat}&lon=${lon}`);
+        const res = await fetch(`${getApiBase()}/api/cadastre/parcel-polygon?lat=${lat}&lon=${lon}`);
         if (res.ok) {
           const data = await res.json();
           if (data && data.polygon) {
@@ -5282,7 +5475,10 @@
       mapMarkersGroup.clearLayers();
       mapQuartiersGroup.clearLayers();
 
-      const allItems = listingsData || [];
+      // Synchronisation avec les filtres actifs de l'onglet Veille (si des filtres sont appliqués)
+      const allItems = (Array.isArray(currentFilteredListings) && currentFilteredListings.length < (listingsData || []).length)
+        ? currentFilteredListings
+        : (listingsData || []);
       const totalCount = allItems.length;
       const ventesCount = allItems.filter(x => !x.isLocation && x.transactionType !== 'LOCATION').length;
       const locCount = allItems.filter(x => x.isLocation || x.transactionType === 'LOCATION').length;
@@ -5397,7 +5593,7 @@
               </div>
             ` : ''}
             ${(item.precisionScore > 50 && (item.surfaceEcartLabel || (item.surface_discrepancy && item.surface_discrepancy.status !== 'NOT_APPLICABLE'))) ? `
-              <div style="font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-bottom: 6px; background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
+              <div style="font-size: 9.5px; padding: 2px 6px; border-radius: 4px; margin-bottom: 6px; ${item.surfaceEcartStatus === 'CONFORME' ? 'background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);' : (item.surfaceEcartStatus === 'COPROPRIETE' ? 'background: rgba(148, 163, 184, 0.12); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.3);' : (item.surfaceEcartStatus === 'ECART_MINEUR' ? 'background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.35);' : 'background: rgba(245, 158, 11, 0.18); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.45);'))}">
                 ${item.surfaceEcartLabel || (item.surface_discrepancy && item.surface_discrepancy.label)}
               </div>
             ` : ''}
@@ -5949,7 +6145,7 @@
             <span class="text-base shrink-0">👤</span>
             <div>
               <p class="font-bold text-purple-300">Vous :</p>
-              <p class="mt-0.5 text-white">${q}</p>
+              <p class="mt-0.5 text-white">${escapeHtmlUi(q)}</p>
             </div>
           </div>
         `;
@@ -5983,9 +6179,9 @@
                 <div>
                   <div class="flex items-center gap-2">
                     <p class="font-bold text-white">Assistant Sentinel :</p>
-                    <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">${src}</span>
+                    <span class="text-[10px] px-1.5 py-0.2 rounded bg-slate-800 text-slate-400">${escapeHtmlUi(src)}</span>
                   </div>
-                  <p class="mt-1 text-slate-200 leading-relaxed">${ans}</p>
+                  <p class="mt-1 text-slate-200 leading-relaxed whitespace-pre-line">${escapeHtmlUi(ans)}</p>
                 </div>
               </div>
             `;

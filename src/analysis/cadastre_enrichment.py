@@ -9,6 +9,8 @@ Croise les coordonnées géographiques des annonces avec les bases officielles :
 import math
 import re
 import json
+import hashlib
+import threading
 import logging
 from pathlib import Path
 from typing import Any
@@ -17,6 +19,12 @@ import duckdb
 logger = logging.getLogger(__name__)
 
 DEFAULT_CADASTRE_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "cadastre"
+_INDEX_LOCK = threading.Lock()
+
+
+def _stable_hash_int(val: Any) -> int:
+    """Hash entier 100 % déterministe entre redémarrages Python (remplace hash() aléatoire)."""
+    return int(hashlib.md5(str(val).encode("utf-8")).hexdigest(), 16)
 
 
 def parse_cadastre_area(surface_str: str | None) -> float | None:
@@ -230,13 +238,21 @@ class CadastreSpatialIndex:
                 ))
 
         # 3. Construire le vivier de parcelles cadastrales indexées par commune et par quartier
+        # Exclusion stricte des îlots maritimes (ILE ET ILOT, ILE OUEN, PRONY, WOODIN) pour zéro marqueur en mer
+        EXCLUDED_ISLET_SECTIONS = ("ILOT", "ILE OUEN", "PRONY", "PORT BOISE", "WOODIN", "GORO")
         self.commune_parcels.clear()
         for p in all_parcels_flat:
             c_raw = str(p["commune"] or "").upper().replace("-", "_").replace(" ", "_")
+            sec_up = str(p.get("section") or "").upper()
+            if any(ex in sec_up for ex in EXCLUDED_ISLET_SECTIONS):
+                continue
             if "MONT_DORE" in c_raw:
                 c_raw = "MONT_DORE"
             elif "POYA" in c_raw:
                 c_raw = "POYA"
+            # Masque terrestre strict pour Nouméa (exclut îlot Maître, Signal, Larégnère, Amédée)
+            if c_raw == "NOUMEA" and not (-22.3120 <= p["lat"] <= -22.2169 and 166.4050 <= p["lon"] <= 166.5062):
+                continue
             if c_raw not in self.commune_parcels:
                 self.commune_parcels[c_raw] = []
             self.commune_parcels[c_raw].append(p)
@@ -344,6 +360,78 @@ class CadastreSpatialIndex:
             return best_building, round(best_dist, 1)
         return None, None
 
+    def find_parcel_by_lot(
+        self,
+        commune: str | None,
+        lot_num: str,
+        quartier: str | None = None,
+        text_hint: str = ""
+    ) -> dict[str, Any] | None:
+        """
+        Résout un numéro de lot cadastral dans parcelles_nc.parquet.
+        Ne retourne une parcelle certifiée QUE si une correspondance fiable est trouvée
+        (match exact de num_lot dans la commune + désambiguïsation par lotissement/quartier).
+        """
+        if not lot_num:
+            return None
+        if not self.is_loaded:
+            self.load()
+
+        from src.reference.geo import normalize_text
+        lot_clean = str(lot_num).strip().upper().lstrip("0")
+        if not lot_clean:
+            return None
+
+        com_clean = str(commune or "").upper().replace("-", "_").replace(" ", "_")
+        if com_clean == "AUTRE":
+            q_norm = normalize_text(f"{quartier or ''} {text_hint[:200]}")
+            for ck in self.commune_parcels.keys():
+                ck_kw = ck.lower().replace("_", " ")
+                if len(ck_kw) >= 3 and re.search(rf"\b{re.escape(ck_kw)}\b", q_norm):
+                    com_clean = ck
+                    break
+
+        pool = self.commune_parcels.get(com_clean, [])
+        if not pool:
+            return None
+
+        candidates = []
+        for p in pool:
+            p_lot = str(p.get("num_lot") or "").strip().upper().lstrip("0")
+            if p_lot == lot_clean:
+                candidates.append(p)
+
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # Désambiguïsation stricte par nom de lotissement ou section mentionné dans l'annonce
+        hint_norm = normalize_text(f"{quartier or ''} {text_hint}")
+        scored = []
+        for p in candidates:
+            lotiss_norm = normalize_text(str(p.get("lotissement") or ""))
+            sec_norm = normalize_text(str(p.get("section") or ""))
+            score = 0
+            if lotiss_norm and len(lotiss_norm) >= 4:
+                # Vérifier les mots significatifs du lotissement (hors "lotissement")
+                l_words = [w for w in lotiss_norm.split() if len(w) >= 4 and w not in ("lotissement", "secteur", "domaine")]
+                if l_words and any(re.search(rf"\b{re.escape(w)}\b", hint_norm) for w in l_words):
+                    score += 10
+            if sec_norm and len(sec_norm) >= 4 and sec_norm in hint_norm:
+                score += 5
+            if score > 0:
+                scored.append((score, p))
+
+        if len(scored) == 1:
+            return scored[0][1]
+        if scored:
+            scored.sort(key=lambda x: x[0], reverse=True)
+            if len(scored) == 1 or scored[0][0] > scored[1][0]:
+                return scored[0][1]
+
+        return None
+
     def resolve_listing_geography(
         self,
         item_id: str,
@@ -353,27 +441,20 @@ class CadastreSpatialIndex:
         description: str | None = ""
     ) -> dict[str, Any]:
         """
-        Résout les coordonnées géographiques terrestres précises pour une annonce.
-        Niveau 1 : Immeuble / Résidence REFIL identifiée dans le titre ou la description (validé dans la commune).
-        Niveau 2 : Répartition déterministe sur les parcelles cadastrales réelles du quartier DANS la commune.
-        Niveau 3 : Répartition déterministe sur le vivier de parcelles cadastrales réelles de la commune.
-        Niveau 4 : Localité identifiée en brousse ou barycentre sécurisé sur la terre ferme.
+        Résout les coordonnées géographiques terrestres précises pour une annonce (100 % déterministe).
         """
         if not self.is_loaded:
             self.load()
 
-        text = f"{title or ''} {description or ''}".lower()
-        text_clean = re.sub(r'(?:contact|tél|tel|email|mail|agent)\s*:.*', '', text, flags=re.IGNORECASE)
+        from src.reference.geo import get_geo_referential, normalize_text
+
+        text_raw = re.sub(r'(?:contact|tél|tel|email|mail|agent)\s*:.*', '', f"{title or ''} {description or ''}", flags=re.IGNORECASE)
+        text_norm = normalize_text(text_raw)
+        quartier_norm = normalize_text(quartier or "")
+        title_norm = normalize_text(title or "")
 
         com_clean = str(commune or "NOUMEA").upper().replace("-", "_").replace(" ", "_")
         target_com = com_clean
-
-        COMMUNE_BOUNDS = {
-            "NOUMEA": {"lat_min": -22.4783, "lat_max": -22.2169, "lon_min": 166.2930, "lon_max": 166.5062},
-            "DUMBEA": {"lat_min": -22.2274, "lat_max": -22.0799, "lon_min": 166.3918, "lon_max": 166.5931},
-            "MONT_DORE": {"lat_min": -22.4673, "lat_max": -22.1486, "lon_min": 166.4802, "lon_max": 166.9733},
-            "PAITA": {"lat_min": -22.2436, "lat_max": -21.9438, "lon_min": 166.0812, "lon_max": 166.4217},
-        }
 
         BROUSSE_COMMUNES = {
             "BOURAIL": (-21.564, 165.493),
@@ -395,6 +476,11 @@ class CadastreSpatialIndex:
             "FARINO": (-21.660, 165.772),
             "SARRAMEA": (-21.644, 165.845),
             "POUM": (-20.233, 164.025),
+            "OUEGOA": (-20.343, 164.438),
+            "PONERIHOUEN": (-21.077, 165.400),
+            "KOUAOUA": (-21.396, 165.826),
+            "POUEBO": (-20.400, 164.583),
+            "BELEP": (-19.723, 163.658),
             "LIFOU": (-20.916, 167.240),
             "MARE": (-21.488, 167.973),
             "OUVEA": (-20.638, 166.576),
@@ -402,98 +488,57 @@ class CadastreSpatialIndex:
             "POYA": (-21.349, 165.155),
         }
 
-        # Si commune déclarée AUTRE, détecter la localité en brousse dans le titre/texte
+        # Si commune déclarée AUTRE, détecter la localité de Brousse en priorité dans quartier, puis titre, puis description (sans accents !)
         if com_clean == "AUTRE":
-            for b_name in BROUSSE_COMMUNES:
-                b_kw = b_name.lower().replace("_", " ")
-                if re.search(r"\b" + re.escape(b_kw) + r"\b", text_clean):
-                    target_com = b_name
+            for scope in (quartier_norm, title_norm, text_norm):
+                if not scope:
+                    continue
+                matched_b = None
+                for b_name in BROUSSE_COMMUNES:
+                    b_kw = b_name.lower().replace("_", " ")
+                    if re.search(rf"\b{re.escape(b_kw)}\b", scope):
+                        matched_b = b_name
+                        break
+                if matched_b:
+                    target_com = matched_b
                     break
 
-        # Détection préalable du quartier par le référentiel si non renseigné
+        # Détection préalable du quartier par le référentiel singleton si non renseigné
         clean_q = str(quartier or "").lower().strip()
-        if not clean_q or clean_q in ("secteur calédonien", "secteur", "none"):
+        if not clean_q or clean_q in ("secteur calédonien", "secteur", "none", "nan"):
             try:
-                from src.reference.geo import GeoReferential
-                geo_ref = GeoReferential()
+                geo_ref = get_geo_referential()
                 c_cand, q_cand, _ = geo_ref.find_location(title or "")
                 if q_cand:
                     clean_q = q_cand.lower().strip()
                     if target_com == "NOUMEA" and c_cand.value != "AUTRE":
                         target_com = c_cand.value
                 else:
-                    c_cand, q_cand, _ = geo_ref.find_location(text_clean)
-                    if q_cand:
+                    c_cand, q_cand, _ = geo_ref.find_location(text_raw)
+                    if q_cand and (target_com == "AUTRE" or c_cand.value == target_com):
                         clean_q = q_cand.lower().strip()
             except Exception:
                 pass
 
-        # Niveau 1 : Détection immeuble REFIL avec vérification communale et de quartier stricte
-        COMMON_WORDS = {
-            "berger", "dominique", "niaoulis", "palmiers", "soleil", "colline",
-            "terrasse", "plage", "grand sud", "jardin", "marina", "baie",
-            "centre ville", "centre-ville", "port", "vallee", "vallée", "vue mer",
-            "belle vue", "bel air", "beau site", "panorama", "les horizons", "horizons",
-            "le rocher", "rocher", "oasis", "paradis", "le parc", "les jardins",
-            "grand large", "flamboyant", "flamboyants", "bougainvillea", "alizes",
-            "les alizes", "bleu", "vert", "harmonie", "clairiere", "hauteurs"
-        }
-        TRIGGERS = ("résidence", "residence", "immeuble", "bâtiment", "batiment", "domaine", "lotissement", "tour")
-
-        if target_com in COMMUNE_BOUNDS:
-            b_bounds = COMMUNE_BOUNDS[target_com]
-            for b_nom, b_lat, b_lon, orig_nom, adrs, q_refil in self.refil_text_lookup:
-                # Vérifier que le bâtiment REFIL est bien dans la commune ciblée
-                if not (b_bounds["lat_min"] <= b_lat <= b_bounds["lat_max"] and b_bounds["lon_min"] <= b_lon <= b_bounds["lon_max"]):
-                    continue
-
-                # Détection du déclencheur contextuel ("résidence", "immeuble", etc.)
-                has_trigger = any(
-                    f"{cw} {b_nom}" in text_clean or f"{cw} « {b_nom} »" in text_clean or f"{cw} \"{b_nom}\"" in text_clean
-                    for cw in TRIGGERS
-                )
-
-                # Si mot commun ou nom court, exiger impérativement un déclencheur
-                if b_nom in COMMON_WORDS or len(b_nom) < 7:
-                    if not has_trigger:
-                        continue
-                else:
-                    if not (f" {b_nom} " in f" {text_clean} " or f"'{b_nom}" in text_clean or f'"{b_nom}' in text_clean or f"({b_nom}" in text_clean):
-                        continue
-
-                # Vérifier la cohérence inter-quartier si aucun déclencheur explicite ou si mot commun
-                if (not has_trigger or b_nom in COMMON_WORDS) and clean_q and clean_q not in ("secteur calédonien", "secteur", "none", ""):
-                    if q_refil and str(q_refil).lower() not in ("none", ""):
-                        q_c = clean_q.replace("-", " ").replace("_", " ")
-                        q_rc = str(q_refil).lower().replace("-", " ").replace("_", " ")
-                        if q_c not in q_rc and q_rc not in q_c:
-                            continue
-
-                return {
-                    "lat": b_lat,
-                    "lon": b_lon,
-                    "match_type": "REFIL_BUILDING",
-                    "refilNom": orig_nom,
-                    "refilAdresse": adrs,
-                    "refilQuartier": q_refil
-                }
-
-        # Niveau 2 : Répartition sur parcelle cadastrale réelle du quartier DANS la commune
+        # Niveau 2 : Répartition déterministe sur parcelle cadastrale réelle du quartier DANS la commune
         q_pool = self.commune_quartier_parcels.get(target_com, {})
-        p_list = q_pool.get(clean_q)
-        if not p_list:
+        p_list = q_pool.get(clean_q) if clean_q else None
+        if not p_list and clean_q and clean_q not in ("secteur calédonien", "secteur", "none", "nan"):
+            clean_q_norm = normalize_text(clean_q)
             for k, v in q_pool.items():
-                if k in clean_q or clean_q in k:
+                k_norm = normalize_text(k)
+                if clean_q_norm and k_norm and (k_norm == clean_q_norm or k_norm in clean_q_norm or clean_q_norm in k_norm):
                     p_list = v
                     break
         if not p_list:
             for k, v in q_pool.items():
-                if len(k) >= 4 and re.search(r"\b" + re.escape(k) + r"\b", text_clean):
+                k_norm = normalize_text(k)
+                if len(k_norm) >= 4 and re.search(rf"\b{re.escape(k_norm)}\b", title_norm or text_norm):
                     p_list = v
                     break
 
         if p_list:
-            idx = abs(hash(str(item_id))) % len(p_list)
+            idx = _stable_hash_int(item_id) % len(p_list)
             p = p_list[idx]
             return {
                 "lat": p["lat"],
@@ -502,20 +547,19 @@ class CadastreSpatialIndex:
                 "parcel": p
             }
 
-        # Niveau 3 : Répartition sur le vivier de parcelles cadastrales de la commune
+        # Niveau 3 : Répartition déterministe sur le vivier de parcelles cadastrales de la commune
         c_pool = self.commune_parcels.get(target_com)
         if c_pool:
-            # Pour Nouméa, exclure la zone industrielle de Ducos du vivier de repli résidentiel par défaut
             if target_com == "NOUMEA":
                 res_pool = [
-                    p for p in c_pool 
+                    p for p in c_pool
                     if not (-22.258 <= p["lat"] <= -22.235 and 166.425 <= p["lon"] <= 166.442)
                 ]
                 pool_to_use = res_pool if res_pool else c_pool
             else:
                 pool_to_use = c_pool
 
-            idx = abs(hash(str(item_id))) % len(pool_to_use)
+            idx = _stable_hash_int(item_id) % len(pool_to_use)
             p = pool_to_use[idx]
             return {
                 "lat": p["lat"],
@@ -524,10 +568,10 @@ class CadastreSpatialIndex:
                 "parcel": p
             }
 
-        # Niveau 4 : Localité Brousse ou Fallback Grande Terre sur terre ferme
+        # Niveau 4 : Localité Brousse ou Fallback Grande Terre sur terre ferme (100 % déterministe)
         if target_com in BROUSSE_COMMUNES:
             base_lat, base_lon = BROUSSE_COMMUNES[target_com]
-            h = abs(hash(str(item_id)))
+            h = _stable_hash_int(item_id)
             j_lat = ((h % 40) - 20) * 0.0002
             j_lon = (((h // 40) % 40) - 20) * 0.0002
             return {
@@ -541,10 +585,10 @@ class CadastreSpatialIndex:
             "DUMBEA": (-22.1850, 166.4450),
             "MONT_DORE": (-22.2285, 166.5206),
             "PAITA": (-22.1310, 166.3650),
-            "AUTRE": (-21.5000, 165.5000),
+            "AUTRE": (-21.5640, 165.4930),
         }
-        base_lat, base_lon = centers.get(com_clean, (-21.5000, 165.5000))
-        h = abs(hash(str(item_id)))
+        base_lat, base_lon = centers.get(com_clean, (-21.5640, 165.4930))
+        h = _stable_hash_int(item_id)
         j_lat = ((h % 40) - 20) * 0.0002
         j_lon = (((h // 40) % 40) - 20) * 0.0002
         return {
@@ -585,16 +629,24 @@ class CadastreSpatialIndex:
         item["isCadastreCertifie"] = not is_approx_quartier
 
         if is_approx_quartier:
+            com_lbl = str(item.get("commune") or "Nouméa")
+            cat_lbl = str(item.get("category") or "")
+            if com_lbl.lower() in ("autre", "brousse"):
+                typo_lbl = "Secteur Rural / Brousse"
+            elif cat_lbl == "terrain":
+                typo_lbl = "Terrain / Foncier"
+            else:
+                typo_lbl = "Secteur Résidentiel / Urbain"
             item["cadastreStatus"] = "INDICATIF_QUARTIER"
             item["cadastreComment"] = "Localisation indicative à l'échelle du quartier (~500m). Parcelle exacte et copropriété non certifiables sans adresse ou nom de résidence."
             item["cadastreNic"] = None
             item["cadastreLot"] = None
             item["cadastreLotissement"] = None
-            item["cadastreSection"] = str(item.get("quartier") or item.get("commune") or "Secteur NC")
-            item["cadastreCommune"] = str(item.get("commune") or "Nouméa")
+            item["cadastreSection"] = str(item.get("quartier") or com_lbl or "Secteur NC")
+            item["cadastreCommune"] = com_lbl
             item["cadastreContenance"] = None
             item["cadastreSurfaceM2"] = None
-            item["cadastreTypologie"] = "Zone Urbaine Mixte"
+            item["cadastreTypologie"] = typo_lbl
             item["surfaceEcartLabel"] = None
             item["refilNom"] = None
             item["refilType"] = None
@@ -602,6 +654,12 @@ class CadastreSpatialIndex:
             return item
 
         # 1. Parcelle Cadastrale
+        is_apt = (
+            item.get("category") == "appartement"
+            or item.get("propertyType") in ("APPARTEMENT", "STUDIO", "LOFT")
+            or any(k in (str(item.get("title", "")) + " " + str(item.get("categoryLabel", ""))).lower() for k in ("appartement", "studio", "f1", "f2", "f3", "f4"))
+        )
+
         parcel, p_dist = self.find_nearest_parcel(lat, lon, max_dist_m=120.0)
         if parcel:
             item["cadastreNic"] = parcel.get("nic")
@@ -614,30 +672,20 @@ class CadastreSpatialIndex:
             item["cadastreTypologie"] = parcel.get("typologie")
             item["cadastreDistanceM"] = p_dist
 
-            # Détecteur d'écarts de surface
-            is_apt = (
-                item.get("propertyType") in ("APPARTEMENT", "STUDIO", "LOFT")
-                or "appartement" in (str(item.get("title", "")) + " " + str(item.get("type", ""))).lower()
-            )
-            declared_surf = (
-                item.get("surfaceTerrain")
-                or item.get("surface_terrain_m2")
-                or item.get("surface")
-                or item.get("surface_m2")
-            )
-            
+            hab_surf = item.get("surfaceHabitable") or item.get("surface_habitable_m2") or item.get("surface") or item.get("surface_m2")
+            ter_surf = item.get("surfaceTerrain") or item.get("surface_terrain_m2")
+
             if is_apt:
-                # En copropriété, la contenance cadastrale est l'assiette globale du bâtiment
                 cad_m2 = parcel.get("surface_m2")
                 cad_str = f"{cad_m2:,.0f} m²".replace(",", " ") if cad_m2 else parcel.get("contenance")
-                hab_str = f"{declared_surf} m²" if declared_surf else "N/C"
+                hab_str = f"{hab_surf:.0f} m²" if hab_surf and float(hab_surf) > 0 else "N/C"
                 item["surfaceEcartM2"] = None
                 item["surfaceEcartPct"] = None
                 item["surfaceEcartStatus"] = "COPROPRIETE"
                 item["surfaceEcartLabel"] = f"🏢 Assiette foncière copropriété : {cad_str} (Habitable : {hab_str})"
                 item["isConforme"] = True
             else:
-                disc = calculate_surface_discrepancy(declared_surf, parcel.get("surface_m2"))
+                disc = calculate_surface_discrepancy(ter_surf or hab_surf, parcel.get("surface_m2"))
                 item["surfaceEcartM2"] = disc["surfaceEcartM2"]
                 item["surfaceEcartPct"] = disc["surfaceEcartPct"]
                 item["surfaceEcartStatus"] = disc["surfaceEcartStatus"]
@@ -645,10 +693,6 @@ class CadastreSpatialIndex:
                 item["isConforme"] = disc["isConforme"]
 
         # 2. Immeuble REFIL (Ensemble immobilier / résidence)
-        is_apt = (
-            item.get("propertyType") in ("APPARTEMENT", "STUDIO", "LOFT")
-            or "appartement" in (str(item.get("title", "")) + " " + str(item.get("type", ""))).lower()
-        )
         max_b_dist = 60.0 if is_apt else 35.0
         building, b_dist = self.find_nearest_building(lat, lon, max_dist_m=max_b_dist)
         if building:
@@ -689,11 +733,14 @@ _GLOBAL_INDEX: CadastreSpatialIndex | None = None
 
 
 def get_cadastre_index() -> CadastreSpatialIndex:
-    """Singleton d'accès à l'index spatial cadastre."""
+    """Singleton thread-safe d'accès à l'index spatial cadastre."""
     global _GLOBAL_INDEX
     if _GLOBAL_INDEX is None:
-        _GLOBAL_INDEX = CadastreSpatialIndex()
-        _GLOBAL_INDEX.load()
+        with _INDEX_LOCK:
+            if _GLOBAL_INDEX is None:
+                idx = CadastreSpatialIndex()
+                idx.load()
+                _GLOBAL_INDEX = idx
     return _GLOBAL_INDEX
 
 

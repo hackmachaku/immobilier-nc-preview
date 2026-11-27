@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import gzip
 import re
 import urllib.parse
 import threading
@@ -22,6 +23,7 @@ from src.utils.logger import get_logger, DEFAULT_LOG_FILE
 from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
+from src.reference.geo import get_geo_referential, normalize_text
 from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
 from src.processing.description_structurer import structure_description
 from src.processing.ai_enricher import (
@@ -42,8 +44,18 @@ logger = get_logger("server")
 
 PORT = 8080
 
+_CACHE_LOCK = threading.Lock()
+_BUILD_LISTINGS_LOCK = threading.Lock()
 PARCEL_POLYGON_CACHE: Dict[str, Any] = {}
 _CACHED_LISTINGS_PAYLOAD: Optional[bytes] = None
+
+ALLOWED_STATIC_PATHS = {
+    "/index.html",
+    "/data_listings.json",
+    "/data_sources.json",
+    "/data_agencies.json",
+    "/favicon.ico",
+}
 
 _BATCH_AI_JOB: Dict[str, Any] = {
     "running": False,
@@ -58,14 +70,14 @@ _BATCH_AI_JOB: Dict[str, Any] = {
 
 def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float = 0.0) -> Dict[str, Any]:
     """
-    Détermine la zone PUD officielle et les règles d'urbanisme applicables
+    Détermine le zonage PUD indicatif par secteur et les règles d'urbanisme usuelles
     pour une localisation en Nouvelle-Calédonie (Grand Nouméa et Brousse).
     """
-    c_norm = (commune or "Nouméa").strip().lower()
-    q_norm = (quartier or "").strip().lower()
+    c_norm = normalize_text(commune or "Nouméa")
+    q_norm = normalize_text(quartier or "")
 
     if "noum" in c_norm:
-        if any(w in q_norm for w in ["centre", "moselle", "artillerie", "victoire"]):
+        if any(w in q_norm for w in ["centre", "moselle", "artillerie", "victoire", "latin"]):
             return {
                 "zone": "UA",
                 "zoneLabel": "Zone UA • Centre-Ville Historique",
@@ -73,29 +85,9 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
                 "hauteurMax": "R+6 à R+10 (jusqu'à 32 m)",
                 "empriseSol": "80% à 100%",
                 "droitsBatir": "Forte constructibilité en hauteur, pas de retrait obligatoire sur rue",
-                "source": "PUD Nouméa Ville Approuvé"
+                "source": "Zonage PUD indicatif par secteur • Nouméa"
             }
-        elif any(w in q_norm for w in ["baie des citrons", "anse vata", "val plaisance", "trianon", "motor pool", "magenta", "faubourg"]):
-            return {
-                "zone": "UB",
-                "zoneLabel": "Zone UB • Faubourgs Résidentiels Denses & Balnéaires",
-                "vocation": "Habitat collectif intermédiaire, résidences de standing et villas",
-                "hauteurMax": "R+3 / R+4 (12 m à 15 m)",
-                "empriseSol": "45% à 50%",
-                "droitsBatir": "Piscine autorisée, surélévation possible, recul de 3m à 5m des limites séparatives",
-                "source": "PUD Nouméa Ville Approuvé"
-            }
-        elif any(w in q_norm for w in ["ducos", "normandie", "numbo"]):
-            return {
-                "zone": "UE / UI",
-                "zoneLabel": "Zone UE/UI • Pôle Industriel & Tertiaire",
-                "vocation": "Docks industriels, ateliers, commerces de gros et bureaux d'entreprises",
-                "hauteurMax": "12 m à 15 m",
-                "empriseSol": "60%",
-                "droitsBatir": "Activités commerciales et artisanales prioritaires, logement de gardiennage uniquement",
-                "source": "PUD Nouméa Ville Approuvé"
-            }
-        elif any(w in q_norm for w in ["tina", "portes de fer", "haut-magenta", "vallée des colons"]):
+        elif any(w in q_norm for w in ["haut magenta", "haut-magenta", "tina", "portes de fer", "vallee des colons", "normandie", "ouemo", "riviere salee", "pk4", "pk6", "pk7", "tuband", "kamere", "logicoop", "mont venus"]):
             return {
                 "zone": "UC / UD",
                 "zoneLabel": "Zone UC/UD • Résidentiel Calme & Pavillonnaire",
@@ -103,7 +95,27 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
                 "hauteurMax": "R+1 + combles (7 m à 9 m)",
                 "empriseSol": "30% à 35%",
                 "droitsBatir": "Préservation du cadre paysager, coefficient d'emprise maîtrisé, annexes et piscines autorisées",
-                "source": "PUD Nouméa Ville Approuvé"
+                "source": "Zonage PUD indicatif par secteur • Nouméa"
+            }
+        elif any(w in q_norm for w in ["baie des citrons", "anse vata", "val plaisance", "trianon", "motor pool", "magenta", "faubourg", "orphelinat", "n gea", "ngea", "receiving", "sainte marie"]):
+            return {
+                "zone": "UB",
+                "zoneLabel": "Zone UB • Faubourgs Résidentiels Denses & Balnéaires",
+                "vocation": "Habitat collectif intermédiaire, résidences de standing et villas",
+                "hauteurMax": "R+3 / R+4 (12 m à 15 m)",
+                "empriseSol": "45% à 50%",
+                "droitsBatir": "Piscine autorisée, surélévation possible, recul de 3m à 5m des limites séparatives",
+                "source": "Zonage PUD indicatif par secteur • Nouméa"
+            }
+        elif any(w in q_norm for w in ["ducos", "numbo", "doniambo", "nouville", "montravel"]):
+            return {
+                "zone": "UE / UI",
+                "zoneLabel": "Zone UE/UI • Pôle Industriel & Tertiaire",
+                "vocation": "Docks industriels, ateliers, commerces de gros et bureaux d'entreprises",
+                "hauteurMax": "12 m à 15 m",
+                "empriseSol": "60%",
+                "droitsBatir": "Activités commerciales et artisanales prioritaires, logement de gardiennage uniquement",
+                "source": "Zonage PUD indicatif par secteur • Nouméa"
             }
         else:
             return {
@@ -113,10 +125,10 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
                 "hauteurMax": "R+2 / R+3 (9 m à 12 m)",
                 "empriseSol": "40%",
                 "droitsBatir": "Logements collectifs ou maisons individuelles autorisés",
-                "source": "PUD Nouméa Ville Approuvé"
+                "source": "Zonage PUD indicatif par secteur • Nouméa"
             }
     elif "dumb" in c_norm:
-        if "mer" in q_norm or "apogoti" in q_norm or "koutio" in q_norm or "ville" in q_norm:
+        if any(w in q_norm for w in ["mer", "apogoti", "koutio", "ville", "zac panda", "panda"]):
             return {
                 "zone": "UB_DUMBEA",
                 "zoneLabel": "Zone UB • Coeur Urbain Dumbéa-sur-Mer / Koutio",
@@ -124,7 +136,7 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
                 "hauteurMax": "R+3 / R+4 (12 m à 14 m)",
                 "empriseSol": "45%",
                 "droitsBatir": "Règlementation environnementale Dumbéa, terrasses et varangues valorisées",
-                "source": "PUD Dumbéa Approuvé"
+                "source": "Zonage PUD indicatif par secteur • Dumbéa"
             }
         else:
             return {
@@ -134,7 +146,7 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
                 "hauteurMax": "R+1 (7 m)",
                 "empriseSol": "25% à 30%",
                 "droitsBatir": "Parcelles résidentielles calmes",
-                "source": "PUD Dumbéa Approuvé"
+                "source": "Zonage PUD indicatif par secteur • Dumbéa"
             }
     elif "pait" in c_norm:
         return {
@@ -144,7 +156,7 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
             "hauteurMax": "R+1 (7 m)",
             "empriseSol": "25%",
             "droitsBatir": "Idéal pour maisons avec grand terrain et dépendances",
-            "source": "PUD Païta Approuvé"
+            "source": "Zonage PUD indicatif par secteur • Païta"
         }
     elif "dore" in c_norm or "mont" in c_norm:
         return {
@@ -154,7 +166,7 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
             "hauteurMax": "R+1 (7 m)",
             "empriseSol": "25% à 30%",
             "droitsBatir": "Construction individuelle respectant les marges de recul du littoral",
-            "source": "PUD Mont-Dore Approuvé"
+            "source": "Zonage PUD indicatif par secteur • Mont-Dore"
         }
     else:
         return {
@@ -164,7 +176,7 @@ def determine_pud_zone(commune: str, quartier: str, lat: float = 0.0, lon: float
             "hauteurMax": "R+1 (7 m)",
             "empriseSol": "10% à 20%",
             "droitsBatir": "Constructions liées à l'usage d'habitation rurale ou agricole",
-            "source": "Règlement Territorial NC"
+            "source": "Règlement Territorial indicatif NC"
         }
 
 
@@ -271,14 +283,22 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         super().__init__(*args, directory=str(BASE_DIR), **kwargs)
 
     def _send_json(self, data: Any, status_code: int = 200):
-        """Envoie une réponse JSON strictement valide RFC 8259 (sans NaN) avec les en-têtes CORS nécessaires."""
+        """Envoie une réponse JSON strictement valide RFC 8259 (sans NaN) avec compression GZIP et CORS."""
         if isinstance(data, (bytes, bytearray)):
-            payload = data
+            payload = bytes(data)
         else:
             clean_data = sanitize_for_json(data)
             payload = json.dumps(clean_data, default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+        use_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower() and len(payload) > 1024
+        if use_gzip:
+            payload = gzip.compress(payload, compresslevel=5)
+
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
+        if use_gzip:
+            self.send_header("Content-Encoding", "gzip")
+            self.send_header("Vary", "Accept-Encoding")
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
         self.send_header("Pragma", "no-cache")
@@ -298,12 +318,12 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        """Achemine les requêtes d'API ou sert les fichiers statiques."""
+        """Achemine les requêtes d'API ou sert uniquement les fichiers statiques publics autorisés."""
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
 
-        if path in ("/", "/dashboard"):
-            self.path = "/dashboard_immo_nc.html"
+        if path in ("/", "/dashboard", "/dashboard_immo_nc.html"):
+            self.path = "/index.html"
             return super().do_GET()
 
         if path == "/api/listings":
@@ -329,7 +349,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         elif path == "/api/logs":
             return self.handle_get_logs()
 
-        return super().do_GET()
+        # Liste blanche stricte des fichiers statiques (empêche l'exposition de server.py, config/, data/, logs/, src/)
+        if path in ALLOWED_STATIC_PATHS:
+            return super().do_GET()
+
+        return self._send_json({"success": False, "error": "Accès interdit"}, status_code=403)
 
     def do_POST(self):
         """Gère les requêtes de déclenchement d'actions."""
@@ -464,11 +488,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         custom_model = body.get("model")
         force_refresh = bool(body.get("force_refresh", False))
 
-        # Si un ID de listing est transmis, récupérer l'annonce réelle en base
+        # Si un ID de listing est transmis, récupérer l'annonce réelle en base (requête paramétrée)
         if isinstance(listing_input, str) and not body.get("text"):
             try:
                 db = PropertyDatabase(read_only=True)
-                df = db.query(f"SELECT * FROM listings WHERE id = '{listing_input}' LIMIT 1")
+                df = db.query("SELECT * FROM listings WHERE id = ? LIMIT 1", [listing_input])
                 if not df.empty:
                     listing_input = df.iloc[0].to_dict()
             except Exception:
@@ -482,7 +506,9 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             force_refresh=force_refresh,
             custom_provider=body.get("provider")
         )
-        _CACHED_LISTINGS_PAYLOAD = None
+        if not str(result.get("id") or "").startswith(("text_", "custom_")):
+            with _CACHE_LOCK:
+                _CACHED_LISTINGS_PAYLOAD = None
         self._send_json({"success": True, "data": result})
 
     def handle_post_ai_chat(self):
@@ -502,7 +528,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         if isinstance(listing_data, str):
             try:
                 db = PropertyDatabase(read_only=True)
-                df = db.query(f"SELECT * FROM listings WHERE id = '{listing_data}' LIMIT 1")
+                df = db.query("SELECT * FROM listings WHERE id = ? LIMIT 1", [listing_data])
                 if not df.empty:
                     listing_data = df.iloc[0].to_dict()
             except Exception:
@@ -512,8 +538,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         self._send_json({"success": True, "data": chat_resp})
 
     def handle_post_ai_cache_clear(self):
-        """Réinitialise le cache DuckDB des enrichissements IA."""
+        """Réinitialise le cache DuckDB des enrichissements IA et invalide le cache HTTP."""
+        global _CACHED_LISTINGS_PAYLOAD
         cleared = clear_ai_cache()
+        with _CACHE_LOCK:
+            _CACHED_LISTINGS_PAYLOAD = None
         self._send_json({"success": cleared, "message": "Cache d'enrichissement IA vidé avec succès."})
 
     def handle_post_enrich_geoloc(self):
@@ -545,17 +574,24 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 except (ValueError, TypeError):
                     limit_val = None
 
-            if not limit_val and "refresh" not in query_params and _CACHED_LISTINGS_PAYLOAD is not None:
-                return self._send_json(_CACHED_LISTINGS_PAYLOAD)
+            if not limit_val and "refresh" not in query_params:
+                with _CACHE_LOCK:
+                    cached_bytes = _CACHED_LISTINGS_PAYLOAD
+                if cached_bytes is not None:
+                    return self._send_json(cached_bytes)
 
             db = PropertyDatabase(read_only=True)
             if limit_val and limit_val > 0:
-                df = db.query(f"""
+                safe_lim = min(limit_val, 50000)
+                df = db.query(
+                    """
                     SELECT * FROM listings 
                     WHERE is_active = TRUE 
                     ORDER BY CASE WHEN initial_price_xpf > price_xpf THEN 0 ELSE 1 END, scraped_at DESC, id DESC 
-                    LIMIT {limit_val}
-                """)
+                    LIMIT ?
+                    """,
+                    [safe_lim],
+                )
             else:
                 df = db.query("""
                     SELECT * FROM listings 
@@ -606,19 +642,51 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         "direct_contacts": contacts_list,
                         "sections": sections_list,
                         "technical_specs": raw_resp_dict.get("technical_specs", {}) if isinstance(raw_resp_dict, dict) else {},
-                        "key_highlights": raw_resp_dict.get("key_highlights", []) if isinstance(raw_resp_dict, dict) else []
+                        "key_highlights": raw_resp_dict.get("key_highlights", []) if isinstance(raw_resp_dict, dict) else [],
+                        "agency_metadata": raw_resp_dict.get("agency_metadata", {}) if isinstance(raw_resp_dict, dict) else {},
                     }
             except Exception as e:
                 logger.debug(f"Aucun cache IA chargé : {e}")
 
             listings = []
             now = datetime.now(timezone.utc)
+            geo_ref = get_geo_referential()
 
             COMMUNE_MAP = {
                 "NOUMEA": "Nouméa",
                 "DUMBEA": "Dumbéa",
                 "MONT_DORE": "Mont-Dore",
                 "PAITA": "Païta",
+            }
+
+            # Calcul dynamique des médianes réelles F/m² depuis DuckDB par (transaction, commune, type)
+            sector_pm2_buckets: Dict[tuple, List[float]] = {}
+            commune_pm2_buckets: Dict[tuple, List[float]] = {}
+            global_pm2_buckets: Dict[str, List[float]] = {"VENTE": [], "LOCATION": []}
+            for _, mrow in df.iterrows():
+                m_trans = "LOCATION" if "LOCAT" in str(mrow.get("transaction_type") or "").upper() else "VENTE"
+                m_comm = str(mrow.get("commune") or "NOUMEA").upper()
+                m_ptype = str(mrow.get("property_type") or "AUTRE").upper()
+                m_price = safe_int(mrow.get("price_xpf"), 0)
+                m_surf = safe_float(mrow.get("surface_terrain_m2"), 0.0) if m_ptype == "TERRAIN" else safe_float(mrow.get("surface_habitable_m2"), 0.0)
+                if m_price > 0 and m_surf > 0:
+                    m_pm2 = m_price / m_surf
+                    if m_trans == "LOCATION" and 300 <= m_pm2 <= 6000:
+                        sector_pm2_buckets.setdefault((m_trans, m_comm, m_ptype), []).append(m_pm2)
+                        commune_pm2_buckets.setdefault((m_trans, m_comm), []).append(m_pm2)
+                        global_pm2_buckets[m_trans].append(m_pm2)
+                    elif m_trans == "VENTE" and m_ptype == "TERRAIN" and 500 <= m_pm2 <= 300_000:
+                        sector_pm2_buckets.setdefault((m_trans, m_comm, m_ptype), []).append(m_pm2)
+                    elif m_trans == "VENTE" and m_ptype != "TERRAIN" and 60_000 <= m_pm2 <= 1_800_000:
+                        sector_pm2_buckets.setdefault((m_trans, m_comm, m_ptype), []).append(m_pm2)
+                        commune_pm2_buckets.setdefault((m_trans, m_comm), []).append(m_pm2)
+                        global_pm2_buckets[m_trans].append(m_pm2)
+
+            sector_medians = {k: float(np.median(v)) for k, v in sector_pm2_buckets.items() if len(v) >= 5}
+            commune_medians = {k: float(np.median(v)) for k, v in commune_pm2_buckets.items() if len(v) >= 5}
+            global_medians = {
+                "VENTE": float(np.median(global_pm2_buckets["VENTE"])) if global_pm2_buckets["VENTE"] else 330_000.0,
+                "LOCATION": float(np.median(global_pm2_buckets["LOCATION"])) if global_pm2_buckets["LOCATION"] else 1_650.0,
             }
 
             for _, row in df.iterrows():
@@ -632,30 +700,35 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         img_url = img_match.group(1)
                     else:
                         img_url = ""
+                is_default_image = not bool(img_url)
                 # Nettoyage de la balise technique dans la description
                 desc = re.sub(r"\[IMG:\s*https?://[^\]]+\]", "", desc).strip()
                 prop_type = str(row.get("property_type") or "").upper()
-                struct_desc = structure_description(desc, property_type=prop_type)
                 row_id = str(row.get("id"))
                 ai_cached = ai_enrichments_by_listing.get(row_id)
-                t1_tech_specs = struct_desc.get("technical_specs", {}) or {}
                 if ai_cached and (ai_cached.get("direct_contacts") or ai_cached.get("sections")):
                     final_sections = ai_cached.get("sections", [])
                     final_contacts = ai_cached.get("direct_contacts", [])
                     is_ai_enriched = True
                     ai_model_name = ai_cached.get("model", "IA")
-                    ai_tech_specs = ai_cached.get("technical_specs", {}) or {}
-                    merged_tech_specs = {**t1_tech_specs, **{k: v for k, v in ai_tech_specs.items() if v is not None and v is not False}}
+                    merged_tech_specs = ai_cached.get("technical_specs", {}) or {}
+                    final_highlights = ai_cached.get("key_highlights") or []
+                    agency_meta = ai_cached.get("agency_metadata") or {}
                 else:
+                    struct_desc = structure_description(desc, property_type=prop_type)
                     final_sections = struct_desc.get("sections", [])
                     final_contacts = struct_desc.get("direct_contacts", [])
                     is_ai_enriched = False
                     ai_model_name = None
-                    merged_tech_specs = t1_tech_specs
+                    merged_tech_specs = struct_desc.get("technical_specs", {}) or {}
+                    final_highlights = struct_desc.get("key_highlights", [])
+                    agency_meta = struct_desc.get("agency_metadata", {}) or {}
+                is_llm_enriched = bool(is_ai_enriched and "tier-1" not in str(ai_model_name or "").lower())
                 is_dock = prop_type == "DOCK"
                 has_sea_view = safe_bool(row.get("has_sea_view")) or bool(merged_tech_specs.get("has_sea_view"))
                 has_pool_val = safe_bool(row.get("has_pool")) or bool(merged_tech_specs.get("has_pool"))
                 has_ac_val = safe_bool(row.get("has_air_conditioning")) or bool(merged_tech_specs.get("has_air_conditioning"))
+                is_secured_val = safe_bool(row.get("is_secured"))
 
                 if not img_url:
                     if is_dock:
@@ -717,7 +790,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     else ("🤝 Colocation Acceptée" if is_colocation_compatible else None)
                 )
 
-                # Catégorisation pour filtres frontend
+                # Catégorisation pour filtres frontend (APPARTEMENT prioritaire sur vue mer !)
                 is_terrain = prop_type == "TERRAIN"
                 is_commercial = prop_type in ("LOCAL_COMMERCIAL", "BUREAU", "COMMERCE", "IMMEUBLE")
 
@@ -732,13 +805,14 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 elif is_commercial:
                     category = "local_commercial"
                     category_label = "Local Professionnel & Bureau"
-                elif has_sea_view:
-                    category = "maison_riviere_mer"
-                    category_label = "Rivière & Vue Mer"
                 elif prop_type == "APPARTEMENT":
                     category = "appartement"
                     category_label = "Appartement"
+                elif has_sea_view:
+                    category = "maison_riviere_mer"
+                    category_label = "Villa Vue Mer & Lagon"
                 elif is_colocation_dedicated and prop_type in ("AUTRE", ""):
+                    category = "appartement"
                     category_label = "Colocation"
 
                 commune_enum = str(row.get("commune") or "NOUMEA").upper()
@@ -747,8 +821,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 raw_q = row.get("quartier")
                 if pd.isna(raw_q) or not str(raw_q).strip() or str(raw_q).strip().lower() in ("none", "nan", "secteur calédonien"):
                     try:
-                        from src.reference.geo import GeoReferential
-                        _, q_detected, _ = GeoReferential().find_location(str(row.get("title") or ""))
+                        _, q_detected, _ = geo_ref.find_location(f"{title_raw_str} {url_raw_str}")
                         quartier = q_detected or "Secteur Calédonien"
                     except Exception:
                         quartier = "Secteur Calédonien"
@@ -760,49 +833,22 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 )
                 price_xpf = safe_int(row.get("price_xpf"), 0)
                 surf_hab = safe_float(row.get("surface_habitable_m2"), 0.0)
-                if surf_hab <= 0 and merged_tech_specs.get("surface_habitable_m2"):
+                if not is_terrain and surf_hab <= 0 and merged_tech_specs.get("surface_habitable_m2"):
                     surf_hab = safe_float(merged_tech_specs.get("surface_habitable_m2"), 0.0)
+                if is_terrain:
+                    surf_hab = 0.0
                 surf_ter = safe_float(row.get("surface_terrain_m2"), 0.0)
                 if surf_ter <= 0 and merged_tech_specs.get("surface_terrain_m2"):
                     surf_ter = safe_float(merged_tech_specs.get("surface_terrain_m2"), 0.0)
                 surf_var = safe_float(row.get("surface_terrasse_m2"), 0.0)
                 if surf_var <= 0 and merged_tech_specs.get("surface_terrasse_m2"):
                     surf_var = safe_float(merged_tech_specs.get("surface_terrasse_m2"), 0.0)
-                
-                if is_location:
-                    price_m2 = round(price_xpf / surf_hab, 1) if surf_hab > 0 else 0.0
-                    avg_price_m2_sector = 1650
-                    target_low = int(price_xpf * 0.95)
-                    target_high = price_xpf
-                    verdict = "OPPORTUNITE" if (surf_hab > 0 and price_m2 < 1350) else "CONFORME"
-                    verdict_badge = "🔑 Loyer Attractif NC" if verdict == "OPPORTUNITE" else "⚖️ Loyer Conforme au Marché"
-                    analysis_title = f"Location analysée • Secteur {commune_raw} ({quartier})"
-                    analysis_context = f"Loyer mensuel de {price_xpf:,.0f} F CFP/mois (soit {price_m2:,.0f} F/m²/mois pour {surf_hab:.0f} m²)." if surf_hab > 0 else f"Loyer mensuel affiché de {price_xpf:,.0f} F CFP/mois sur le secteur {commune_raw}."
-                    analysis_levers = [
-                        f"Surface utile : {surf_hab:.0f} m²." if surf_hab > 0 else "Surface exacte à vérifier avec le bailleur lors de la visite.",
-                        "Vérifier si les charges locatives (eau, ordures ménagères, copropriété) sont incluses.",
-                        "Conditions du bail : vérifier le dépôt de garantie et la durée du préavis."
-                    ]
-                else:
-                    price_m2 = safe_float(row.get("prix_m2_habitable_xpf"), 0.0)
-                    avg_price_m2_sector = 340000
-                    target_low = int(price_xpf * 0.94)
-                    target_high = int(price_xpf * 0.98)
-                    verdict = "OPPORTUNITE" if has_sea_view else "CONFORME"
-                    verdict_badge = "🚀 Opportunité Rare NC" if has_sea_view else "⚖️ Prix Conforme au Marché"
-                    analysis_title = f"Offre d'achat analysée • Secteur {commune_raw} ({quartier})"
-                    analysis_context = f"Bien en vente enregistré en base. Ratio de {price_m2:,.0f} F/m² pour une surface de {surf_hab:.0f} m²." if surf_hab > 0 else f"Bien en vente enregistré en base. Secteur {commune_raw}."
-                    analysis_levers = [
-                        f"Surface utile globale : {surf_hab:.0f} m² habitables." if surf_hab > 0 else "Surface habitable à vérifier lors de la visite.",
-                        "Vérifier les diagnostics techniques et l'état de la toiture lors de la visite.",
-                        "Marge de négociation courante sur ce secteur : entre -4% et -8%."
-                    ]
 
                 init_price_xpf = safe_int(row.get("initial_price_xpf"), 0)
                 if init_price_xpf <= 0:
                     init_price_xpf = price_xpf
 
-                # Date de publication d'origine et calcul réel de daysOnMarket
+                # Date de publication d'origine et calcul réel de daysOnMarket (calculé avant le verdict)
                 pub_time = row.get("published_at")
                 first_seen = row.get("first_seen_at")
                 scraped_time = row.get("scraped_at")
@@ -818,6 +864,100 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         date_added_str = ref_ts.strftime("%Y-%m-%d")
                     except Exception:
                         days_on_market = 1
+
+                # Verdict marché basé sur les médianes réelles calculées en DuckDB
+                avg_price_m2_sector = round(
+                    sector_medians.get((transaction_type, commune_enum, prop_type))
+                    or commune_medians.get((transaction_type, commune_enum))
+                    or global_medians.get(transaction_type, 330_000.0 if not is_location else 1_650.0)
+                )
+                drop_pct_real = ((init_price_xpf - price_xpf) / init_price_xpf * 100.0) if (init_price_xpf > price_xpf > 0) else 0.0
+
+                if is_location:
+                    price_m2 = round(price_xpf / surf_hab, 1) if surf_hab > 0 else 0.0
+                    target_low = int(price_xpf * 0.95)
+                    target_high = price_xpf
+                    if surf_hab > 0 and avg_price_m2_sector > 0 and price_m2 <= avg_price_m2_sector * 0.85:
+                        verdict = "OPPORTUNITE"
+                        verdict_badge = "🔑 Loyer Sous Médiane Secteur"
+                    elif (surf_hab > 0 and avg_price_m2_sector > 0 and price_m2 >= avg_price_m2_sector * 1.15) or days_on_market >= 90:
+                        verdict = "A_NEGOCIER"
+                        verdict_badge = "📉 Loyer à Négocier"
+                    else:
+                        verdict = "CONFORME"
+                        verdict_badge = "⚖️ Loyer Conforme au Marché"
+                    analysis_title = f"Location analysée • Secteur {commune_raw} ({quartier})"
+                    analysis_context = (
+                        f"Loyer mensuel de {price_xpf:,.0f} F CFP/mois (soit {price_m2:,.0f} F/m²/mois pour {surf_hab:.0f} m² vs médiane secteur {avg_price_m2_sector:,.0f} F/m²)."
+                        if surf_hab > 0
+                        else f"Loyer mensuel affiché de {price_xpf:,.0f} F CFP/mois sur le secteur {commune_raw} (surface habitable non précisée)."
+                    )
+                    analysis_levers = [
+                        f"Surface habitable déclarée : {surf_hab:.0f} m²." if surf_hab > 0 else "Surface habitable exacte à confirmer avec le bailleur lors de la visite.",
+                        "Vérifier si les charges locatives (eau, ordures ménagères, copropriété) sont incluses.",
+                        "Conditions du bail : vérifier le dépôt de garantie, l'état des lieux et la durée du préavis."
+                    ]
+                else:
+                    if is_terrain:
+                        price_m2 = round(price_xpf / surf_ter, 0) if surf_ter > 0 else 0.0
+                    else:
+                        price_m2 = round(price_xpf / surf_hab, 0) if surf_hab > 0 else safe_float(row.get("prix_m2_habitable_xpf"), 0.0)
+                    target_low = int(price_xpf * 0.92)
+                    target_high = int(price_xpf * 0.97)
+                    if (price_m2 > 0 and avg_price_m2_sector > 0 and price_m2 <= avg_price_m2_sector * 0.85) or drop_pct_real >= 10.0:
+                        verdict = "OPPORTUNITE"
+                        verdict_badge = "🚀 Sous la Médiane Marché"
+                    elif (price_m2 > 0 and avg_price_m2_sector > 0 and price_m2 >= avg_price_m2_sector * 1.15) or days_on_market >= 90:
+                        verdict = "A_NEGOCIER"
+                        verdict_badge = "📉 Marge de Négociation"
+                    else:
+                        verdict = "CONFORME"
+                        verdict_badge = "⚖️ Prix Conforme au Marché"
+                    analysis_title = f"Offre d'achat analysée • Secteur {commune_raw} ({quartier})"
+                    if is_terrain:
+                        analysis_context = (
+                            f"Terrain en vente : {price_m2:,.0f} F/m² de foncier pour {surf_ter:,.0f} m² ({surf_ter/100:.1f} ares) vs médiane secteur {avg_price_m2_sector:,.0f} F/m²."
+                            if surf_ter > 0
+                            else f"Terrain en vente sur le secteur {commune_raw} ({quartier}). Surface parcellaire exacte à vérifier au Cadastre NC."
+                        )
+                        analysis_levers = [
+                            f"Surface foncière déclarée : {surf_ter:,.0f} m² ({surf_ter/100:.1f} ares)." if surf_ter > 0 else "Contenance cadastrale exacte à vérifier sur cadastre.gouv.nc.",
+                            "Vérifier la viabilisation (eau, EEC/Enercal, assainissement), le bornage et le zonage PUD exact en mairie.",
+                            "Contrôler la constructibilité, la pente et les servitudes d'accès avant offre."
+                        ]
+                    elif is_dock or is_commercial:
+                        analysis_context = (
+                            f"Actif professionnel en vente : {price_m2:,.0f} F/m² pour {surf_hab:.0f} m² (médiane secteur {avg_price_m2_sector:,.0f} F/m²)."
+                            if surf_hab > 0
+                            else f"Actif professionnel en vente sur le secteur {commune_raw} ({quartier})."
+                        )
+                        analysis_levers = [
+                            f"Surface professionnelle : {surf_hab:.0f} m²." if surf_hab > 0 else "Surface utile et hauteur sous plafond à confirmer sur place.",
+                            "Vérifier la conformité ERP/sécurité incendie, la puissance électrique et les accès poids lourds/parking.",
+                            "Analyser les charges, la taxe foncière et le bail en cours si vendu occupé."
+                        ]
+                    elif prop_type == "APPARTEMENT":
+                        analysis_context = (
+                            f"Appartement en vente : {price_m2:,.0f} F/m² pour {surf_hab:.0f} m² (médiane secteur {avg_price_m2_sector:,.0f} F/m²)."
+                            if surf_hab > 0
+                            else f"Appartement en vente sur le secteur {commune_raw} ({quartier}). Surface habitable non précisée."
+                        )
+                        analysis_levers = [
+                            f"Surface habitable déclarée : {surf_hab:.0f} m²." if surf_hab > 0 else "Surface habitable (hors varangue) à vérifier lors de la visite.",
+                            "Demander les 3 derniers PV d'assemblée générale, le montant des charges et les travaux votés en copropriété.",
+                            "Marge de négociation usuelle sur le secteur : entre -4% et -8%."
+                        ]
+                    else:
+                        analysis_context = (
+                            f"Bien en vente : {price_m2:,.0f} F/m² pour {surf_hab:.0f} m² habitables (médiane secteur {avg_price_m2_sector:,.0f} F/m²)."
+                            if surf_hab > 0
+                            else f"Bien en vente sur le secteur {commune_raw} ({quartier}). Surface habitable non précisée."
+                        )
+                        analysis_levers = [
+                            f"Surface habitable déclarée : {surf_hab:.0f} m²." if surf_hab > 0 else "Surface habitable exacte à vérifier lors de la visite.",
+                            "Vérifier l'état de la toiture, de la charpente, de l'assainissement et les conformités de construction.",
+                            "Marge de négociation usuelle sur le secteur : entre -4% et -8%."
+                        ]
 
                 # Statut : Baisses de prix prioritaires, puis Nouveau (<=7j), puis Stable
                 if price_xpf < init_price_xpf:
@@ -905,6 +1045,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 # Détermination de la typologie (Studio, F1, F2, F3, F4, F5+)
                 raw_rooms = safe_int(row.get("rooms"), 0)
                 raw_bedrooms = safe_int(row.get("bedrooms"), 0)
+                raw_bathrooms = safe_int(row.get("bathrooms"), 0)
                 room_type = ""
                 room_type_code = ""
 
@@ -1002,9 +1143,10 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 # Géolocalisation haute précision et datation des photos
                 lat_p = safe_float(row.get("lat_precise"), None)
                 lon_p = safe_float(row.get("lon_precise"), None)
+                bounds_invalidated = False
                 if lat_p and lon_p:
                     COMMUNE_BOUNDS_VERIF = {
-                        "NOUMEA": (-22.4783, -22.2169, 166.2930, 166.5062),
+                        "NOUMEA": (-22.3200, -22.2169, 166.4000, 166.5062),
                         "DUMBEA": (-22.2274, -22.0799, 166.3918, 166.5931),
                         "MONT_DORE": (-22.4673, -22.1486, 166.4802, 166.9733),
                         "PAITA": (-22.2436, -21.9438, 166.0812, 166.4217),
@@ -1014,17 +1156,23 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                         if not (b_lat_min <= lat_p <= b_lat_max and b_lon_min <= lon_p <= b_lon_max):
                             lat_p = None
                             lon_p = None
+                            bounds_invalidated = True
                     elif commune_enum == "AUTRE":
                         if -22.48 <= lat_p <= -22.05 and 166.05 <= lon_p <= 167.00:
                             lat_p = None
                             lon_p = None
+                            bounds_invalidated = True
 
                 final_lat = lat_p if (lat_p is not None and lat_p != 0.0) else lat_val
                 final_lon = lon_p if (lon_p is not None and lon_p != 0.0) else lon_val
 
                 prec_score = safe_int(row.get("precision_score"), 40)
-                prec_level = str(row.get("precision_level") or "QUARTIER_DEFAULT")
-                prec_detail = str(row.get("precision_detail") or f"Approximation secteur {quartier}")
+                prec_level = safe_str(row.get("precision_level"), "QUARTIER_DEFAULT")
+                prec_detail = safe_str(row.get("precision_detail"), f"Approximation secteur {quartier}")
+                if bounds_invalidated or (lat_p is None and prec_level in ("METRIQUE_GPS", "IMMEUBLE_REFIL", "LOT_CADASTRE")):
+                    prec_score = 40
+                    prec_level = "QUARTIER_DEFAULT"
+                    prec_detail = f"Approximation secteur {quartier}"
 
                 if prec_score >= 95 or prec_level == "METRIQUE_GPS":
                     prec_badge = "🟢 95% GPS Photo"
@@ -1062,27 +1210,42 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     else:
                         photo_badge = f"📷 Prise le {photo_date_str}"
 
-                # Résolution dynamique des coordonnées réelles d'agence
+                # Résolution dynamique des coordonnées réelles d'agence (Zéro numéro fictif !)
                 clean_agency_name = normalize_agency_name(row.get("agency_name"))
-                agency_meta = struct_desc.get("agency_metadata", {})
                 real_agency_phone = agency_meta.get("phone")
                 real_agency_email = agency_meta.get("email")
                 real_agency_hours = agency_meta.get("hours", [])
                 real_agency_legal = agency_meta.get("legal", [])
 
-                row_agency_phone = safe_str(row.get("agency_phone"))
-                final_agency_phone = real_agency_phone or (f"+687 {row_agency_phone}" if row_agency_phone and not row_agency_phone.startswith("+") else row_agency_phone)
+                first_contact_phone = None
+                for fc in (final_contacts or []):
+                    if isinstance(fc, dict) and fc.get("phone"):
+                        first_contact_phone = str(fc["phone"]).strip()
+                        break
 
-                if not final_agency_phone:
+                final_agency_phone = direct_ph or first_contact_phone or real_agency_phone or ""
+
+                if not final_agency_phone and clean_agency_name and clean_agency_name.lower() not in ("agence immobilière", "particulier", "particulier / immonc", "inconnu"):
+                    c_ag_low = clean_agency_name.lower()
                     for ag in NC_AGENCIES:
-                        if ag.get("name") and (ag["name"].lower() == clean_agency_name.lower() or ag["name"].lower() in clean_agency_name.lower() or clean_agency_name.lower() in ag["name"].lower()):
+                        ag_low = str(ag.get("name") or "").lower()
+                        if ag_low and (ag_low == c_ag_low or (len(c_ag_low) >= 6 and (ag_low in c_ag_low or c_ag_low in ag_low))):
                             if ag.get("phone"):
                                 final_agency_phone = ag["phone"]
                                 break
 
-                final_agency_phone = final_agency_phone or "+687 28.10.20"
-                phone_digits = re.sub(r'\D', '', final_agency_phone)
-                final_whatsapp = f"687{phone_digits[-6:]}" if len(phone_digits) >= 6 and phone_digits[-6] in ('7', '8', '9') else None
+                # WhatsApp UNIQUEMENT pour un vrai mobile NC (7x, 8x, 9x) — jamais sur fixe ni numéro factice !
+                final_whatsapp = None
+                candidate_phones = [direct_ph, first_contact_phone, final_agency_phone]
+                for cp in candidate_phones:
+                    if not cp:
+                        continue
+                    p_digits = re.sub(r'\D', '', str(cp))
+                    if len(p_digits) >= 6 and p_digits[-6] in ('7', '8', '9'):
+                        final_whatsapp = f"687{p_digits[-6:]}"
+                        break
+
+                final_agency_phone = final_agency_phone or "Non renseigné"
 
                 display_title = title_raw_str
                 if display_title.lower() == "colocation":
@@ -1131,11 +1294,13 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "hasPool": has_pool_val,
                     "hasAirConditioning": has_ac_val,
                     "hasSeaView": has_sea_view,
+                    "isSecured": is_secured_val,
                     "complementaryDetails": comp_details,
                     "directNegotiator": direct_neg,
                     "directPhone": direct_ph,
                     "rooms": raw_rooms if raw_rooms > 0 else None,
                     "bedrooms": raw_bedrooms if raw_bedrooms > 0 else None,
+                    "bathrooms": raw_bathrooms if raw_bathrooms > 0 else None,
                     "roomType": room_type,
                     "roomTypeCode": room_type_code,
                     "dateAdded": date_added_str,
@@ -1156,14 +1321,16 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "agencyEmail": real_agency_email,
                     "agencyHours": real_agency_hours,
                     "agencyLegal": real_agency_legal,
-                    "whatsapp": final_whatsapp or "687281020",
+                    "whatsapp": final_whatsapp,
                     "image": img_url,
+                    "isDefaultImage": is_default_image,
                     "images": images,
                     "description": desc,
                     "isAiEnriched": is_ai_enriched,
+                    "isLlmEnriched": is_llm_enriched,
                     "aiModelName": ai_model_name,
                     "structuredDescription": final_sections,
-                    "descriptionHighlights": struct_desc.get("key_highlights", []),
+                    "descriptionHighlights": final_highlights,
                     "directContacts": final_contacts,
                     "features": features,
                     "priceHistory": price_history,
@@ -1183,7 +1350,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             clean_payload = {"success": True, "count": len(listings), "data": listings}
             payload_bytes = json.dumps(sanitize_for_json(clean_payload), default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
             if not limit_val:
-                _CACHED_LISTINGS_PAYLOAD = payload_bytes
+                with _CACHE_LOCK:
+                    _CACHED_LISTINGS_PAYLOAD = payload_bytes
             self._send_json(payload_bytes)
         except Exception as e:
             logger.error(f"Erreur lors de la récupération des annonces : {e}")
@@ -1197,8 +1365,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         try:
             parsed_url = urllib.parse.urlparse(self.path)
             params = urllib.parse.parse_qs(parsed_url.query)
-            lat = float(params.get("lat", [0])[0])
-            lon = float(params.get("lon", [0])[0])
+            try:
+                lat = float(params.get("lat", [0])[0])
+                lon = float(params.get("lon", [0])[0])
+            except (ValueError, TypeError):
+                return self._send_json({"success": False, "error": "Paramètres lat/lon numériques requis"}, status_code=400)
 
             if not (-24.0 <= lat <= -19.0 and 163.0 <= lon <= 169.0):
                 return self._send_json({"success": False, "error": "Coordonnées hors Nouvelle-Calédonie"}, status_code=400)
@@ -1304,8 +1475,11 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             params = urllib.parse.parse_qs(parsed_url.query)
             commune = params.get("commune", ["Nouméa"])[0]
             quartier = params.get("quartier", [""])[0]
-            lat = float(params.get("lat", [0])[0])
-            lon = float(params.get("lon", [0])[0])
+            try:
+                lat = float(params.get("lat", [0])[0])
+                lon = float(params.get("lon", [0])[0])
+            except (ValueError, TypeError):
+                return self._send_json({"success": False, "error": "Paramètres lat/lon numériques requis"}, status_code=400)
 
             zone_info = determine_pud_zone(commune, quartier, lat, lon)
             return self._send_json({"success": True, "pud": zone_info})
@@ -1403,7 +1577,14 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 k = s["key"]
                 found = db_counts.get(k, {})
                 c = found.get("count", 0)
-                ls = found.get("last_scan", "Aujourd'hui")
+                ls = found.get("last_scan", "")
+                if c == 0 or not ls:
+                    formatted_ls = "Jamais"
+                else:
+                    try:
+                        formatted_ls = pd.to_datetime(ls).strftime("%d/%m/%Y %H:%M")
+                    except Exception:
+                        formatted_ls = ls
                 results.append({
                     "id": s["id"],
                     "name": s["name"],
@@ -1412,7 +1593,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     "role": s["role"],
                     "status": "active" if c > 0 else "standby",
                     "method": s["method"],
-                    "lastScan": f"À l'instant ({ls[-5:]})" if " " in ls else ls,
+                    "lastScan": formatted_ls,
                     "count": c,  # Compte réel strict sans repli factice
                 })
 
@@ -1461,15 +1642,17 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 primary_source = "Fédération immobilier.nc"
                 last_scraped = ""
 
-                # Recherche de correspondances dans les statistiques réelles
+                # Recherche de correspondances dans les statistiques réelles (sans double-comptage)
                 ag_name_lower = ag["name"].lower()
                 for db_k, db_val in db_agency_stats.items():
+                    if db_k in matched_db_keys:
+                        continue
                     is_match = False
                     if db_k == ag_name_lower:
                         is_match = True
                     else:
                         for alias in ag.get("aliases", []):
-                            if alias in db_k or db_k in alias:
+                            if len(alias) >= 4 and (alias in db_k or db_k in alias):
                                 is_match = True
                                 break
 
@@ -1497,10 +1680,12 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 })
 
             # Ajout des agences / négociateurs présents en base mais hors des 52 prédéfinies
+            import hashlib
             for db_k, db_val in db_agency_stats.items():
                 if db_k not in matched_db_keys and db_val["name_in_db"] != " ":
+                    slug_hash = hashlib.md5(db_k.encode("utf-8")).hexdigest()[:6]
                     agencies_list.append({
-                        "id": "extra_" + re.sub(r"[^a-z0-9]", "_", db_k)[:15],
+                        "id": "extra_" + re.sub(r"[^a-z0-9]", "_", db_k)[:15] + "_" + slug_hash,
                         "name": db_val["name_in_db"],
                         "website": f"https://www.immobilier.nc",
                         "city": "Nouvelle-Calédonie",
@@ -1616,10 +1801,10 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
 
 def run_server():
-    server_address = ("", PORT)
+    server_address = ("127.0.0.1", PORT)
     httpd = ThreadingHTTPServer(server_address, NCImmoAPIHandler)
     httpd.daemon_threads = True
-    logger.info(f"Serveur API & Dashboard Sentinel démarré sur http://localhost:{PORT}")
+    logger.info(f"Serveur API & Dashboard Sentinel démarré sur http://127.0.0.1:{PORT}")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:
