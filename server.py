@@ -283,6 +283,14 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(BASE_DIR), **kwargs)
 
+    def end_headers(self):
+        # Empêche le navigateur de conserver une ancienne version d'index.html en cache disque
+        if not any(h.lower().startswith(b"cache-control:") for h in getattr(self, "_headers_buffer", [])):
+            self.send_header("Cache-Control", "no-cache, no-store, must-revalidate")
+            self.send_header("Pragma", "no-cache")
+            self.send_header("Expires", "0")
+        super().end_headers()
+
     def _send_json(self, data: Any, status_code: int = 200):
         """Envoie une réponse JSON strictement valide RFC 8259 (sans NaN) avec compression GZIP et CORS."""
         if isinstance(data, (bytes, bytearray)):
