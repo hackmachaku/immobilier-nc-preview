@@ -356,6 +356,10 @@
             <span>🤝 Colocations</span>
             <span id="colocCountBadge" class="px-1.5 py-0.5 bg-pink-500/25 text-pink-200 rounded-full text-[10px] font-bold">0</span>
           </button>
+          <button onclick="setFilter('category', 'favorites')" class="category-btn px-3.5 py-1.5 rounded-lg text-xs font-medium bg-slate-800 text-amber-300 hover:bg-slate-700 hover:text-amber-200 transition-all flex items-center gap-1.5 border border-amber-500/40" title="Afficher uniquement vos annonces enregistrées en favoris">
+            <span>⭐ Mes Favoris</span>
+            <span id="favCountBadge" class="px-1.5 py-0.5 bg-amber-500/25 text-amber-200 rounded-full text-[10px] font-bold">0</span>
+          </button>
         </div>
 
         <!-- Commune, Transaction, Agency & Opportunity Filters -->
@@ -402,6 +406,7 @@
             <option value="all">Tous les statuts</option>
             <option value="new">🟢 Nouveaux (≤ 7j)</option>
             <option value="price_drop">📉 Baisses de prix récentes</option>
+            <option value="multi_portal">🔗 Multi-portails & Écarts d'agences</option>
             <option value="manual">✍️ Saisies manuelles</option>
           </select>
 
@@ -421,6 +426,17 @@
             <option value="price_desc">Prix décroissant</option>
             <option value="drop_desc">Plus forte baisse (%)</option>
           </select>
+
+          <button type="button" id="btnToggleDedup" onclick="toggleHideDuplicates()" class="px-3 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs text-emerald-200 font-semibold flex items-center gap-1.5 transition-all cursor-pointer" title="Regrouper automatiquement les annonces identiques publiées sur plusieurs portails (immobilier.nc, bienmeloger.nc, immonc) sans perdre les écarts de prix">
+            <span>🔗</span>
+            <span id="dedupToggleLabel">Doublons masqués</span>
+            <span id="dedupHiddenBadge" class="px-1.5 py-0.2 rounded-full bg-emerald-500/25 text-emerald-200 text-[10px] font-bold">0</span>
+          </button>
+
+          <button type="button" onclick="saveCurrentSearchAsAlert()" class="px-3 py-1.5 rounded-lg bg-sky-950/60 hover:bg-sky-900/70 border border-sky-500/40 text-xs text-sky-200 font-semibold flex items-center gap-1.5 transition-all cursor-pointer" title="Enregistrer vos filtres actuels comme alerte de veille personnalisée">
+            <span>🔔</span>
+            <span>Créer une alerte</span>
+          </button>
         </div>
 
         <!-- SECTION FOURCHETTE DE PRIX DYNAMIQUE (SLIDER & PRESETS) -->
@@ -461,6 +477,19 @@
           </div>
 
         </div>
+      </div>
+
+      <!-- RADAR D'ALERTES & RECHERCHES SAUVEGARDÉES -->
+      <div id="savedAlertsContainer" class="hidden p-4 rounded-2xl bg-[var(--card)] border border-sky-500/30 space-y-2.5">
+        <div class="flex items-center justify-between gap-2 flex-wrap">
+          <div class="flex items-center gap-2">
+            <span class="text-base">🔔</span>
+            <h3 class="text-xs font-bold text-white uppercase tracking-wider">Mes Alertes & Radar d'Opportunités</h3>
+            <span id="savedAlertsCountBadge" class="px-2 py-0.5 rounded-full text-[10px] font-bold bg-sky-500/20 text-sky-300 border border-sky-500/30">0</span>
+          </div>
+          <span class="text-[11px] text-slate-400">Cliquez sur une alerte pour appliquer ses filtres instantanément</span>
+        </div>
+        <div id="savedAlertsList" class="flex flex-wrap gap-2"></div>
       </div>
 
       <!-- BANNIÈRE DE FILTRE KPI ACTIF (Feedback visuel instantané) -->
@@ -1894,6 +1923,41 @@
     </div>
   </div>
 
+  <!-- ===================================================================== -->
+  <!-- BARRE FLOTTANTE & MODALE COMPARATEUR CÔTE-À-CÔTE (JUSQU'À 4 BIENS)    -->
+  <!-- ===================================================================== -->
+  <div id="compareFloatingBar" class="hidden fixed bottom-4 left-1/2 -translate-x-1/2 z-[9990] w-[95%] max-w-4xl p-3 rounded-2xl bg-slate-900/95 border border-sky-500/50 shadow-2xl shadow-sky-950/60 backdrop-blur-md flex flex-col sm:flex-row items-center justify-between gap-3">
+    <div class="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+      <span class="px-2.5 py-1 rounded-lg bg-sky-500/20 text-sky-300 border border-sky-500/40 text-xs font-bold shrink-0">
+        ⚖️ Comparateur (<span id="compareBarCount">0</span>/4)
+      </span>
+      <div id="compareBarItems" class="flex items-center gap-1.5 flex-wrap"></div>
+    </div>
+    <div class="flex items-center gap-2 shrink-0">
+      <button type="button" onclick="clearCompareList()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition-all cursor-pointer">
+        ✕ Effacer
+      </button>
+      <button type="button" onclick="openCompareModal()" id="btnLaunchCompare" class="px-4 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold shadow-lg shadow-sky-600/30 transition-all cursor-pointer">
+        ⚖️ Comparer côte-à-côte
+      </button>
+    </div>
+  </div>
+
+  <div id="compareModal" class="fixed inset-0 bg-black/85 backdrop-blur-sm z-[99999] hidden flex items-center justify-center p-3 sm:p-6" style="z-index: 99999;" onclick="if(event.target===this) closeCompareModal()">
+    <div class="bg-[var(--card)] border border-[var(--border)] rounded-2xl max-w-6xl w-full max-h-[90vh] flex flex-col overflow-hidden shadow-2xl">
+      <div class="p-4 sm:p-5 border-b border-slate-800 flex items-center justify-between gap-3 bg-slate-900/70">
+        <div>
+          <h3 class="text-base sm:text-lg font-bold text-white flex items-center gap-2">
+            <span>⚖️ Comparateur Immobilier Côte-à-Côte</span>
+          </h3>
+          <p class="text-xs text-slate-400 mt-0.5">Les meilleures valeurs de chaque critère (prix/m², surface, précision géo, charges) sont mises en évidence en vert.</p>
+        </div>
+        <button type="button" onclick="closeCompareModal()" class="p-2 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-sm font-bold cursor-pointer">✕</button>
+      </div>
+      <div id="compareModalBody" class="p-4 sm:p-5 overflow-auto custom-scrollbar flex-1"></div>
+    </div>
+  </div>
+
   <!-- JAVASCRIPT LOGIC -->
   <script>
     // =========================================================================
@@ -2789,6 +2853,18 @@
       const colocCount = listingsData.filter(x => x.isColocation === true).length;
       const colocBadge = document.getElementById('colocCountBadge');
       if (colocBadge) colocBadge.textContent = colocCount;
+
+      const favSet = new Set(getFavoritesList());
+      const favCount = listingsData.filter(x => favSet.has(x.id)).length;
+      const favBadge = document.getElementById('favCountBadge');
+      if (favBadge) favBadge.textContent = favCount;
+
+      const hiddenDupCount = listingsData.filter(x => x.isDuplicateSecondary === true).length;
+      const dedupBadge = document.getElementById('dedupHiddenBadge');
+      if (dedupBadge) dedupBadge.textContent = hiddenDupCount;
+
+      renderSavedAlertsBar();
+      renderCompareFloatingBar();
     }
 
     function filterByKpi(type) {
@@ -3117,8 +3193,17 @@
 
       updateKpiActiveStyles(opportunity);
 
+      const favSetFilter = new Set(getFavoritesList());
+
       let filtered = listingsData.filter(item => {
-        const matchesCategory = activeCategory === 'all' || (activeCategory === 'colocation' ? item.isColocation === true : item.category === activeCategory);
+        // Masquage des doublons secondaires multi-portails (sauf mode Favoris ou filtre Multi-portails)
+        if (hideDuplicates && activeCategory !== 'favorites' && opportunity !== 'multi_portal' && item.isDuplicateSecondary === true) {
+          return false;
+        }
+        const matchesCategory = activeCategory === 'all'
+          || (activeCategory === 'colocation' ? item.isColocation === true
+          : (activeCategory === 'favorites' ? favSetFilter.has(item.id)
+          : item.category === activeCategory));
         const itemCommune = normStr(item.commune);
         const matchesCommune = commune === 'all' || (itemCommune.length > 0 && (itemCommune.includes(commune) || commune.includes(itemCommune)));
         const itemTrans = item.transactionType || (item.isLocation ? 'LOCATION' : 'VENTE');
@@ -3148,6 +3233,8 @@
           matchesOpp = item.status === 'new' || (typeof item.daysOnMarket === 'number' && item.daysOnMarket <= 7);
         } else if (opportunity === 'price_drop') {
           matchesOpp = item.status === 'price_drop' || (item.initialPrice > 0 && item.currentPrice < item.initialPrice);
+        } else if (opportunity === 'multi_portal') {
+          matchesOpp = (item.duplicateCount || 1) > 1 && !item.isDuplicateSecondary;
         } else if (opportunity === 'manual') {
           matchesOpp = item.isManual === true;
         }
@@ -3574,6 +3661,11 @@
                       ${item.precisionBadge}
                     </span>
                   ` : ''}
+                  ${(item.duplicateCount && item.duplicateCount > 1) ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold ${item.priceSpreadXpf > 0 ? 'bg-amber-500/35 text-amber-100 border border-amber-400/60' : 'bg-indigo-500/30 text-indigo-100 border border-indigo-400/50'} backdrop-blur-md shadow-md" title="Bien identifié sur ${item.duplicateCount} annonces${item.priceSpreadXpf > 0 ? ' — Écart de prix constaté : ' + item.priceSpreadXpf.toLocaleString('fr-FR') + ' F CFP !' : ''}">
+                      ${item.priceSpreadXpf > 0 ? `⚡ Écart ${(item.priceSpreadXpf >= 1000000 ? (item.priceSpreadXpf/1000000).toFixed(1)+'M' : Math.round(item.priceSpreadXpf/1000)+'k')} F (${item.duplicateCount})` : `🔗 ${item.duplicateCount} portails`}
+                    </span>
+                  ` : ''}
                 </div>
                 <!-- Badge prix / statut : ancré à droite, largeur maîtrisée -->
                 <div class="shrink-0 pointer-events-auto ml-1">
@@ -3721,6 +3813,12 @@
                 </div>
 
                 <div class="flex items-center gap-1.5 shrink-0">
+                  <button type="button" onclick="event.stopPropagation(); toggleFavorite('${escapeHtmlUi(item.id)}')" title="${isFavorite(item.id) ? 'Retirer des favoris' : 'Ajouter aux favoris'}" class="p-2 rounded-lg border transition-colors cursor-pointer ${isFavorite(item.id) ? 'bg-amber-500/25 border-amber-400/60 text-amber-300' : 'bg-slate-800 hover:bg-amber-950/60 border-slate-700 text-slate-400 hover:text-amber-300'}">
+                    <span class="text-xs leading-none block">${isFavorite(item.id) ? '★' : '☆'}</span>
+                  </button>
+                  <button type="button" onclick="event.stopPropagation(); toggleCompare('${escapeHtmlUi(item.id)}')" title="${isCompared(item.id) ? 'Retirer du comparateur' : 'Ajouter au comparateur côte-à-côte'}" class="p-2 rounded-lg border transition-colors cursor-pointer ${isCompared(item.id) ? 'bg-sky-500/30 border-sky-400 text-sky-200' : 'bg-slate-800 hover:bg-sky-950/60 border-slate-700 text-slate-400 hover:text-sky-300'}">
+                    <span class="text-xs leading-none block">⚖️</span>
+                  </button>
                   ${(item.agencyPhone && item.agencyPhone !== 'Non renseigné') ? `
                     <a href="tel:${item.agencyPhone}" title="Appeler" class="p-2 rounded-lg bg-slate-800 hover:bg-sky-600 text-slate-300 hover:text-white transition-colors">
                       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
@@ -4145,6 +4243,63 @@
 
         <div class="p-6 space-y-6">
           
+          <!-- BARRE D'ACTIONS PERSONNELLES (FAVORI, COMPARATEUR & NOTE) -->
+          <div class="p-4 rounded-2xl bg-slate-900/75 border border-slate-800 flex flex-col gap-3">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+              <div class="flex items-center gap-2 flex-wrap">
+                <button type="button" id="btnModalFav_${item.id}" onclick="toggleFavorite('${escapeHtmlUi(item.id)}', true)" class="px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isFavorite(item.id) ? 'bg-amber-500/25 text-amber-200 border-amber-400/60' : 'bg-slate-800 text-slate-200 border-slate-700 hover:border-amber-400/50'}">
+                  ${isFavorite(item.id) ? '★ Enregistré en Favori' : '☆ Ajouter aux Favoris'}
+                </button>
+                <button type="button" id="btnModalCmp_${item.id}" onclick="toggleCompare('${escapeHtmlUi(item.id)}', true)" class="px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${isCompared(item.id) ? 'bg-sky-500/30 text-sky-200 border-sky-400' : 'bg-slate-800 text-slate-200 border-slate-700 hover:border-sky-400/50'}">
+                  ${isCompared(item.id) ? '⚖️ Dans le Comparateur' : '⚖️ Comparer ce bien'}
+                </button>
+              </div>
+              <span class="text-[11px] text-slate-400">Sauvegardé automatiquement dans votre navigateur</span>
+            </div>
+            <div>
+              <label class="block text-[11px] font-semibold text-slate-400 mb-1">📝 Ma note personnelle de visite / suivi :</label>
+              <textarea id="noteInput_${item.id}" rows="2" onchange="saveListingNote('${escapeHtmlUi(item.id)}', this.value)" onblur="saveListingNote('${escapeHtmlUi(item.id)}', this.value)" placeholder="Ex: Visite prévue samedi 10h, vérifier exposition alizés et charges copro..." class="w-full px-3 py-2 rounded-xl bg-slate-950/90 border border-slate-800 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-1 focus:ring-sky-500">${escapeHtmlUi(getListingNote(item.id))}</textarea>
+            </div>
+          </div>
+
+          ${(item.multiPortals && item.multiPortals.length > 1) ? `
+            <!-- BLOC MULTI-PORTAILS & ÉCARTS DE PRIX ENTRE AGENCES -->
+            <div class="p-5 rounded-2xl bg-gradient-to-br from-indigo-950/50 via-slate-900 to-slate-950 border ${item.priceSpreadXpf > 0 ? 'border-amber-500/50' : 'border-indigo-500/40'} space-y-3">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2.5 border-b border-slate-800">
+                <div class="flex items-center gap-2">
+                  <span class="text-lg">🔗</span>
+                  <div>
+                    <h4 class="text-sm font-bold text-white">Bien détecté sur ${item.multiPortals.length} annonces / portails</h4>
+                    <p class="text-[11px] text-slate-400">Comparaison automatique entre portails et agences sur ce même bien</p>
+                  </div>
+                </div>
+                ${item.priceSpreadXpf > 0 ? `
+                  <span class="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-400/50">
+                    ⚡ Écart constaté : ${formatPriceXPF(item.priceSpreadXpf)}
+                  </span>
+                ` : `
+                  <span class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/40">
+                    Prix harmonisé multi-portails
+                  </span>
+                `}
+              </div>
+              <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                ${item.multiPortals.map((mp, idx) => `
+                  <a href="${escapeHtmlUi(mp.url || '#')}" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-slate-900/90 border ${idx === 0 && item.priceSpreadXpf > 0 ? 'border-emerald-500/50' : 'border-slate-800'} hover:border-sky-500/50 flex items-center justify-between gap-2 transition-all">
+                    <div class="min-w-0">
+                      <div class="flex items-center gap-1.5">
+                        <span class="text-xs font-bold text-white truncate">${escapeHtmlUi(mp.agencyName || 'Agence')}</span>
+                        ${idx === 0 && item.priceSpreadXpf > 0 ? `<span class="px-1.5 py-0.2 rounded text-[9.5px] font-bold bg-emerald-500/20 text-emerald-300">🏆 Meilleur prix</span>` : ''}
+                      </div>
+                      <span class="text-[11px] text-sky-400">${escapeHtmlUi(mp.source || '')} ↗</span>
+                    </div>
+                    <span class="font-mono text-xs font-black ${idx === 0 && item.priceSpreadXpf > 0 ? 'text-emerald-400' : 'text-slate-200'} shrink-0">${formatPriceXPF(mp.price)}</span>
+                  </a>
+                `).join('')}
+              </div>
+            </div>
+          ` : ''}
+
           <!-- PRIX & TIMELINE CHRONOLOGIQUE -->
           <div class="p-5 rounded-2xl bg-slate-900/90 border border-[var(--border)]">
             <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4 pb-3 border-b border-slate-800">
@@ -6501,9 +6656,456 @@
     }
 
     // =========================================================================
+    // LOT 3 : DÉDOUBLONNAGE, FAVORIS, NOTES, COMPARATEUR & ALERTES PERSONNELLES
+    // =========================================================================
+    let hideDuplicates = (() => {
+      try {
+        const v = localStorage.getItem('sentinel_hide_duplicates');
+        return v === null ? true : v === 'true';
+      } catch (e) { return true; }
+    })();
+
+    function getFavoritesList() {
+      try {
+        const raw = localStorage.getItem('sentinel_favorites');
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; }
+    }
+
+    function isFavorite(id) {
+      return getFavoritesList().includes(id);
+    }
+
+    function toggleFavorite(id, fromModal = false) {
+      const list = getFavoritesList();
+      const idx = list.indexOf(id);
+      const added = idx === -1;
+      if (added) list.push(id);
+      else list.splice(idx, 1);
+      try { localStorage.setItem('sentinel_favorites', JSON.stringify(list)); } catch (e) {}
+
+      if (fromModal) {
+        const btn = document.getElementById('btnModalFav_' + id);
+        if (btn) {
+          btn.textContent = added ? '★ Enregistré en Favori' : '☆ Ajouter aux Favoris';
+          btn.className = `px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${added ? 'bg-amber-500/25 text-amber-200 border-amber-400/60' : 'bg-slate-800 text-slate-200 border-slate-700 hover:border-amber-400/50'}`;
+        }
+      }
+      renderCurrentPageListings();
+      updateKPIs();
+      showNotificationToast(
+        added ? '⭐ Ajouté aux Favoris' : 'Favori retiré',
+        added ? 'Retrouvez cette annonce dans l\'onglet « ⭐ Mes Favoris ».' : 'L\'annonce a été retirée de vos favoris.',
+        added ? 'success' : 'info',
+        2600
+      );
+    }
+
+    function getNotesMap() {
+      try {
+        const raw = localStorage.getItem('sentinel_notes');
+        const obj = raw ? JSON.parse(raw) : {};
+        return (obj && typeof obj === 'object') ? obj : {};
+      } catch (e) { return {}; }
+    }
+
+    function getListingNote(id) {
+      return getNotesMap()[id] || '';
+    }
+
+    function saveListingNote(id, value) {
+      const map = getNotesMap();
+      const trimmed = (value || '').trim();
+      if (trimmed) map[id] = trimmed;
+      else delete map[id];
+      try { localStorage.setItem('sentinel_notes', JSON.stringify(map)); } catch (e) {}
+    }
+
+    function getCompareIds() {
+      try {
+        const raw = localStorage.getItem('sentinel_compare');
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr.slice(0, 4) : [];
+      } catch (e) { return []; }
+    }
+
+    function isCompared(id) {
+      return getCompareIds().includes(id);
+    }
+
+    function toggleCompare(id, fromModal = false) {
+      const list = getCompareIds();
+      const idx = list.indexOf(id);
+      if (idx === -1) {
+        if (list.length >= 4) {
+          showNotificationToast('Comparateur complet', 'Vous pouvez comparer jusqu\'à 4 annonces simultanément. Retirez-en une d\'abord.', 'info', 3500);
+          return;
+        }
+        list.push(id);
+      } else {
+        list.splice(idx, 1);
+      }
+      try { localStorage.setItem('sentinel_compare', JSON.stringify(list)); } catch (e) {}
+      if (fromModal) {
+        const btn = document.getElementById('btnModalCmp_' + id);
+        const nowCmp = list.includes(id);
+        if (btn) {
+          btn.textContent = nowCmp ? '⚖️ Dans le Comparateur' : '⚖️ Comparer ce bien';
+          btn.className = `px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer ${nowCmp ? 'bg-sky-500/30 text-sky-200 border-sky-400' : 'bg-slate-800 text-slate-200 border-slate-700 hover:border-sky-400/50'}`;
+        }
+      }
+      renderCurrentPageListings();
+      renderCompareFloatingBar();
+    }
+
+    function clearCompareList() {
+      try { localStorage.setItem('sentinel_compare', JSON.stringify([])); } catch (e) {}
+      renderCurrentPageListings();
+      renderCompareFloatingBar();
+      closeCompareModal();
+    }
+
+    function renderCompareFloatingBar() {
+      const bar = document.getElementById('compareFloatingBar');
+      const cnt = document.getElementById('compareBarCount');
+      const itemsEl = document.getElementById('compareBarItems');
+      if (!bar || !cnt || !itemsEl) return;
+
+      const ids = getCompareIds();
+      const validItems = ids.map(id => listingsData.find(x => x.id === id)).filter(Boolean);
+      if (validItems.length === 0) {
+        bar.classList.add('hidden');
+        return;
+      }
+      bar.classList.remove('hidden');
+      cnt.textContent = validItems.length;
+      itemsEl.innerHTML = validItems.map(it => `
+        <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 border border-slate-700 text-[11px] text-slate-200 max-w-[180px]">
+          <span class="truncate">${escapeHtmlUi(it.title)}</span>
+          <button type="button" onclick="toggleCompare('${escapeHtmlUi(it.id)}')" class="text-slate-400 hover:text-rose-400 font-bold cursor-pointer">✕</button>
+        </span>
+      `).join('');
+    }
+
+    function openCompareModal() {
+      const ids = getCompareIds();
+      const items = ids.map(id => listingsData.find(x => x.id === id)).filter(Boolean);
+      if (items.length < 2) {
+        showNotificationToast('Comparateur', 'Sélectionnez au moins 2 annonces (bouton ⚖️) pour lancer la comparaison côte-à-côte.', 'info', 3500);
+        return;
+      }
+      const modal = document.getElementById('compareModal');
+      const body = document.getElementById('compareModalBody');
+      if (!modal || !body) return;
+
+      const minPrice = Math.min(...items.map(x => x.currentPrice || Infinity));
+      const pm2Vals = items.map(x => x.priceM2 || 0).filter(v => v > 0);
+      const minPm2 = pm2Vals.length ? Math.min(...pm2Vals) : null;
+      const habVals = items.map(x => x.surfaceHabitable || 0).filter(v => v > 0);
+      const maxHab = habVals.length ? Math.max(...habVals) : null;
+      const terVals = items.map(x => x.surfaceTerrain || 0).filter(v => v > 0);
+      const maxTer = terVals.length ? Math.max(...terVals) : null;
+      const maxPrec = Math.max(...items.map(x => x.precisionScore || 40));
+
+      const rows = [
+        {
+          label: '💰 Prix',
+          render: x => {
+            const best = x.currentPrice && x.currentPrice === minPrice;
+            return `<span class="font-black text-sm ${best ? 'text-emerald-400' : 'text-white'}">${formatPriceXPF(x.currentPrice)}${x.isLocation ? '/m' : ''}</span>${best ? ' <span class="text-[10px] text-emerald-300">🏆</span>' : ''}`;
+          }
+        },
+        {
+          label: '📐 Ratio Prix / m²',
+          render: x => {
+            if (!x.priceM2) return '<span class="text-slate-500">N/C</span>';
+            const best = minPm2 !== null && x.priceM2 === minPm2;
+            return `<span class="font-bold ${best ? 'text-emerald-400' : 'text-slate-200'}">${Math.round(x.priceM2).toLocaleString('fr-FR')} F/m²</span>${best ? ' <span class="text-[10px] text-emerald-300">🏆</span>' : ''}`;
+          }
+        },
+        {
+          label: '🏠 Surface Habitable',
+          render: x => {
+            if (!x.surfaceHabitable) return '<span class="text-slate-500">N/C</span>';
+            const best = maxHab !== null && x.surfaceHabitable === maxHab;
+            return `<span class="font-bold ${best ? 'text-emerald-400' : 'text-white'}">${x.surfaceHabitable} m²</span>${best ? ' <span class="text-[10px] text-emerald-300">🏆</span>' : ''}`;
+          }
+        },
+        {
+          label: '🌿 Terrain / Varangue',
+          render: x => {
+            const parts = [];
+            if (x.surfaceTerrain > 0) {
+              const best = maxTer !== null && x.surfaceTerrain === maxTer;
+              parts.push(`<span class="${best ? 'text-emerald-400 font-bold' : ''}">${x.surfaceTerrain} m² (${(x.surfaceTerrain/100).toFixed(1)} ares)${best ? ' 🏆' : ''}</span>`);
+            }
+            if (x.surfaceVarangue > 0) parts.push(`Terrasse ${x.surfaceVarangue} m²`);
+            return parts.length ? parts.join('<br>') : '<span class="text-slate-500">N/C</span>';
+          }
+        },
+        {
+          label: '🛋️ Agencement',
+          render: x => {
+            const bits = [];
+            if (x.roomType) bits.push(`<strong>${escapeHtmlUi(x.roomType)}</strong>`);
+            if (x.bedrooms) bits.push(`${x.bedrooms} ch.`);
+            if (x.bathrooms) bits.push(`${x.bathrooms} SDB`);
+            if (x.etage) bits.push(`Étage ${escapeHtmlUi(x.etage)}`);
+            return bits.length ? bits.join(' • ') : '<span class="text-slate-500">N/C</span>';
+          }
+        },
+        {
+          label: '💳 Charges mensuelles',
+          render: x => x.chargesMensuelles ? `${x.chargesMensuelles.toLocaleString('fr-FR')} F/m` : '<span class="text-slate-500">N/C</span>'
+        },
+        {
+          label: '✨ Équipements',
+          render: x => {
+            const eq = [];
+            if (x.hasAirConditioning) eq.push('❄️ Clim');
+            if (x.hasPool) eq.push('🏊 Piscine');
+            if (x.hasSeaView) eq.push('🌊 Vue mer');
+            if (x.hasElevator) eq.push('🛗 Ascenseur');
+            if (x.parkingDetail || x.parkings) eq.push(`🚗 ${escapeHtmlUi(x.parkingDetail || (x.parkings + ' pl.'))}`);
+            if (x.isSecured) eq.push('🔒 Sécurisé');
+            return eq.length ? eq.join(' • ') : '<span class="text-slate-500">Aucun spécifié</span>';
+          }
+        },
+        {
+          label: '🎯 Précision Géo & Cadastre',
+          render: x => {
+            const best = (x.precisionScore || 40) === maxPrec && maxPrec >= 70;
+            return `<span class="${best ? 'text-emerald-400 font-bold' : 'text-slate-300'}">${escapeHtmlUi(x.precisionBadge || '40% Secteur')}</span>${x.cadastreNic && x.precisionScore > 50 ? `<div class="text-[10px] font-mono text-sky-400 mt-0.5">NIC ${escapeHtmlUi(x.cadastreNic)}</div>` : ''}`;
+          }
+        },
+        {
+          label: '📊 Verdict Marché',
+          render: x => `<span class="font-semibold text-xs">${escapeHtmlUi(x.verdictBadge || x.marketVerdict || 'N/C')}</span><div class="text-[10px] text-slate-400">En ligne depuis ${x.daysOnMarket || 1} j</div>`
+        },
+        {
+          label: '🔗 Multi-portails & Agence',
+          render: x => `<div>${escapeHtmlUi(x.agencyName || 'Agence')}</div><div class="text-[10px] text-slate-400">${escapeHtmlUi(x.source || '')}${x.duplicateCount > 1 ? ` • ${x.duplicateCount} annonces${x.priceSpreadXpf > 0 ? ' (écart ' + formatPriceXPF(x.priceSpreadXpf) + ')' : ''}` : ''}</div>`
+        },
+      ];
+
+      body.innerHTML = `
+        <div class="overflow-x-auto">
+          <table class="w-full text-xs text-left border-collapse">
+            <thead>
+              <tr class="border-b border-slate-800">
+                <th class="p-3 text-slate-400 font-bold uppercase tracking-wider w-44 align-top">Critère</th>
+                ${items.map(it => `
+                  <th class="p-3 min-w-[210px] align-top">
+                    <div class="relative h-28 rounded-xl overflow-hidden mb-2 border border-slate-800">
+                      <img src="${it.image}" alt="${escapeHtmlUi(it.title)}" class="w-full h-full object-cover">
+                      <button type="button" onclick="toggleCompare('${escapeHtmlUi(it.id)}'); if(getCompareIds().length>=2) openCompareModal(); else closeCompareModal();" class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-slate-950/80 text-slate-300 hover:text-rose-400 text-[10px] font-bold cursor-pointer">✕</button>
+                    </div>
+                    <div class="font-bold text-white text-sm line-clamp-2">${escapeHtmlUi(it.title)}</div>
+                    <div class="text-[11px] text-sky-400 mt-0.5">📍 ${escapeHtmlUi(it.commune)} • ${escapeHtmlUi(it.quartier)}</div>
+                  </th>
+                `).join('')}
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-800/70">
+              ${rows.map(r => `
+                <tr class="hover:bg-slate-900/50">
+                  <td class="p-3 font-semibold text-slate-300 align-top">${r.label}</td>
+                  ${items.map(it => `<td class="p-3 text-slate-200 align-top">${r.render(it)}</td>`).join('')}
+                </tr>
+              `).join('')}
+              <tr>
+                <td class="p-3 font-semibold text-slate-300">Actions</td>
+                ${items.map(it => `
+                  <td class="p-3">
+                    <div class="flex flex-wrap gap-1.5">
+                      <button type="button" onclick="closeCompareModal(); openDetailModal('${escapeHtmlUi(it.id)}')" class="px-2.5 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-[11px] font-semibold cursor-pointer">✨ Fiche</button>
+                      <a href="${escapeHtmlUi(it.sourceUrl || '#')}" target="_blank" rel="noopener noreferrer" class="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-semibold">🔗 Source</a>
+                    </div>
+                  </td>
+                `).join('')}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      modal.classList.remove('hidden');
+    }
+
+    function closeCompareModal() {
+      const modal = document.getElementById('compareModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    function updateDedupToggleUI() {
+      const btn = document.getElementById('btnToggleDedup');
+      const lbl = document.getElementById('dedupToggleLabel');
+      if (!btn || !lbl) return;
+      if (hideDuplicates) {
+        btn.className = "px-3 py-1.5 rounded-lg bg-emerald-950/50 hover:bg-emerald-900/60 border border-emerald-500/40 text-xs text-emerald-200 font-semibold flex items-center gap-1.5 transition-all cursor-pointer";
+        lbl.textContent = "Doublons masqués";
+      } else {
+        btn.className = "px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-600 text-xs text-slate-300 font-semibold flex items-center gap-1.5 transition-all cursor-pointer";
+        lbl.textContent = "Doublons affichés";
+      }
+    }
+
+    function toggleHideDuplicates() {
+      hideDuplicates = !hideDuplicates;
+      try { localStorage.setItem('sentinel_hide_duplicates', String(hideDuplicates)); } catch (e) {}
+      updateDedupToggleUI();
+      filterListings(true);
+    }
+
+    function getSavedAlerts() {
+      try {
+        const raw = localStorage.getItem('sentinel_alerts');
+        const arr = raw ? JSON.parse(raw) : [];
+        return Array.isArray(arr) ? arr : [];
+      } catch (e) { return []; }
+    }
+
+    function saveAlertsList(list) {
+      try { localStorage.setItem('sentinel_alerts', JSON.stringify(list || [])); } catch (e) {}
+    }
+
+    function matchAlertCriteria(item, f) {
+      if (hideDuplicates && item.isDuplicateSecondary) return false;
+      if (f.category && f.category !== 'all') {
+        if (f.category === 'colocation') { if (!item.isColocation) return false; }
+        else if (item.category !== f.category) return false;
+      }
+      if (f.transaction && f.transaction !== 'all') {
+        const t = item.transactionType || (item.isLocation ? 'LOCATION' : 'VENTE');
+        if (f.transaction === 'COLOCATION') { if (!item.isColocation) return false; }
+        else if (t !== f.transaction) return false;
+      }
+      if (f.commune && f.commune !== 'all') {
+        const ic = normStr(item.commune);
+        const fc = normStr(f.commune);
+        if (!ic || (!ic.includes(fc) && !fc.includes(ic))) return false;
+      }
+      if (f.roomType && f.roomType !== 'all') {
+        if (f.roomType === '5+') { if (!(item.roomTypeCode === '5+' || (item.rooms && item.rooms >= 5))) return false; }
+        else if (!(item.roomTypeCode === f.roomType || (item.rooms && String(item.rooms) === f.roomType))) return false;
+      }
+      if (f.priceMin > 0 && (item.currentPrice || 0) < f.priceMin) return false;
+      if (f.priceMax !== null && f.priceMax !== undefined && (item.currentPrice || 0) > f.priceMax) return false;
+      if (f.search) {
+        const s = normStr(f.search);
+        const hit = normStr(item.title).includes(s) || normStr(item.quartier).includes(s) || normStr(item.commune).includes(s) || normStr(item.description).includes(s);
+        if (!hit) return false;
+      }
+      return true;
+    }
+
+    function saveCurrentSearchAsAlert() {
+      const f = {
+        category: activeCategory === 'favorites' ? 'all' : activeCategory,
+        transaction: document.getElementById('transactionFilter')?.value || 'all',
+        commune: document.getElementById('communeFilter')?.value || 'all',
+        roomType: document.getElementById('roomTypeFilter')?.value || 'all',
+        search: (document.getElementById('searchInput')?.value || '').trim(),
+        priceMin: priceFilterMin || 0,
+        priceMax: priceFilterMax,
+        priceScaleMode: priceScaleMode
+      };
+      const defaultParts = [];
+      if (f.transaction !== 'all') defaultParts.push(f.transaction === 'VENTE' ? 'Achat' : (f.transaction === 'LOCATION' ? 'Location' : 'Coloc'));
+      if (f.category !== 'all') defaultParts.push(f.category.replace('_', ' '));
+      if (f.commune !== 'all') defaultParts.push(f.commune);
+      if (f.roomType !== 'all') defaultParts.push('F' + f.roomType);
+      if (f.priceMax) defaultParts.push('≤ ' + formatPriceCompact(f.priceMax));
+      if (f.search) defaultParts.push('« ' + f.search + ' »');
+      const suggested = defaultParts.length ? defaultParts.join(' • ') : 'Veille Globale NC';
+
+      const label = prompt('Nom de votre alerte de veille personnalisée :', suggested);
+      if (!label || !label.trim()) return;
+
+      const alerts = getSavedAlerts();
+      alerts.unshift({
+        id: 'ALR-' + Date.now().toString().slice(-6),
+        name: label.trim(),
+        filters: f,
+        createdAt: new Date().toISOString().slice(0, 10)
+      });
+      saveAlertsList(alerts.slice(0, 10));
+      renderSavedAlertsBar();
+      showNotificationToast('🔔 Alerte Enregistrée', `L'alerte « ${label.trim()} » surveille désormais les nouvelles offres et baisses de prix.`, 'success', 4000);
+    }
+
+    function applySavedAlert(alertId) {
+      const al = getSavedAlerts().find(a => a.id === alertId);
+      if (!al || !al.filters) return;
+      const f = al.filters;
+
+      activeCategory = f.category || 'all';
+      document.querySelectorAll('.category-btn').forEach(btn => {
+        const isMatch = (btn.getAttribute('onclick') || '').includes(`'${activeCategory}'`);
+        btn.classList.toggle('active', isMatch);
+        btn.classList.toggle('bg-sky-500', isMatch);
+        btn.classList.toggle('text-white', isMatch);
+        btn.classList.toggle('bg-slate-800', !isMatch);
+      });
+
+      const tSel = document.getElementById('transactionFilter');
+      if (tSel) tSel.value = f.transaction || 'all';
+      const cSel = document.getElementById('communeFilter');
+      if (cSel) cSel.value = f.commune || 'all';
+      const rSel = document.getElementById('roomTypeFilter');
+      if (rSel) rSel.value = f.roomType || 'all';
+      const sIn = document.getElementById('searchInput');
+      if (sIn) sIn.value = f.search || '';
+
+      priceScaleMode = f.priceScaleMode || ((f.transaction === 'LOCATION' || f.transaction === 'COLOCATION') ? 'LOCATION' : 'VENTE');
+      setPricePreset('custom', f.priceMin || 0, f.priceMax !== undefined ? f.priceMax : null);
+      showNotificationToast('🔔 Alerte Appliquée', `Filtres chargés pour « ${al.name} ».`, 'info', 2500);
+    }
+
+    function deleteSavedAlert(alertId) {
+      const next = getSavedAlerts().filter(a => a.id !== alertId);
+      saveAlertsList(next);
+      renderSavedAlertsBar();
+    }
+
+    function renderSavedAlertsBar() {
+      const box = document.getElementById('savedAlertsContainer');
+      const listEl = document.getElementById('savedAlertsList');
+      const cntEl = document.getElementById('savedAlertsCountBadge');
+      if (!box || !listEl) return;
+
+      const alerts = getSavedAlerts();
+      if (alerts.length === 0) {
+        box.classList.add('hidden');
+        return;
+      }
+      box.classList.remove('hidden');
+      if (cntEl) cntEl.textContent = alerts.length;
+
+      listEl.innerHTML = alerts.map(al => {
+        const matches = (listingsData || []).filter(it => matchAlertCriteria(it, al.filters || {}));
+        const newCnt = matches.filter(x => x.status === 'new' || (typeof x.daysOnMarket === 'number' && x.daysOnMarket <= 7)).length;
+        const dropCnt = matches.filter(x => x.status === 'price_drop' || (x.initialPrice > 0 && x.currentPrice < x.initialPrice)).length;
+        return `
+          <div class="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-900/90 border border-slate-700/80 hover:border-sky-500/60 transition-all text-xs">
+            <button type="button" onclick="applySavedAlert('${escapeHtmlUi(al.id)}')" class="flex items-center gap-2 text-left cursor-pointer">
+              <span class="font-bold text-white">${escapeHtmlUi(al.name)}</span>
+              <span class="px-1.5 py-0.2 rounded bg-sky-500/20 text-sky-300 font-mono text-[10px] font-bold">${matches.length} biens</span>
+              ${newCnt > 0 ? `<span class="px-1.5 py-0.2 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">🟢 ${newCnt}</span>` : ''}
+              ${dropCnt > 0 ? `<span class="px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 text-[10px] font-bold">📉 ${dropCnt}</span>` : ''}
+            </button>
+            <button type="button" onclick="deleteSavedAlert('${escapeHtmlUi(al.id)}')" title="Supprimer l'alerte" class="text-slate-500 hover:text-rose-400 font-bold pl-1 border-l border-slate-800 cursor-pointer">✕</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // =========================================================================
     // INITIALISATION AU CHARGEMENT
     // =========================================================================
     window.addEventListener('DOMContentLoaded', () => {
+      updateDedupToggleUI();
       updatePriceSliderUI();
       filterListings();
       renderSourcesTable();

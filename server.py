@@ -23,6 +23,7 @@ from src.utils.logger import get_logger, DEFAULT_LOG_FILE
 from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
+from src.analysis.deduplicator import detect_and_annotate_duplicates
 from src.reference.geo import get_geo_referential, normalize_text
 from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
 from src.processing.description_structurer import structure_description
@@ -1346,6 +1347,12 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 listings = enrich_listings(listings)
             except Exception as e:
                 logger.warning(f"Impossible d'enrichir les annonces avec le cadastre : {e}")
+
+            # Dédoublonnage multi-portails & détection des écarts de prix entre agences
+            try:
+                listings = detect_and_annotate_duplicates(listings)
+            except Exception as e:
+                logger.warning(f"Impossible d'exécuter le dédoublonnage multi-portails : {e}")
 
             clean_payload = {"success": True, "count": len(listings), "data": listings}
             payload_bytes = json.dumps(sanitize_for_json(clean_payload), default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
