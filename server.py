@@ -49,6 +49,14 @@ _CACHE_LOCK = threading.Lock()
 _BUILD_LISTINGS_LOCK = threading.Lock()
 PARCEL_POLYGON_CACHE: Dict[str, Any] = {}
 _CACHED_LISTINGS_PAYLOAD: Optional[bytes] = None
+_CACHED_LISTINGS_GZIP: Optional[bytes] = None
+
+
+def invalidate_listings_cache():
+    global _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP
+    with _CACHE_LOCK:
+        _CACHED_LISTINGS_PAYLOAD = None
+        _CACHED_LISTINGS_GZIP = None
 
 ALLOWED_STATIC_PATHS = {
     "/index.html",
@@ -291,17 +299,22 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             self.send_header("Expires", "0")
         super().end_headers()
 
-    def _send_json(self, data: Any, status_code: int = 200):
+    def _send_json(self, data: Any, status_code: int = 200, precompressed_gzip: Optional[bytes] = None):
         """Envoie une réponse JSON strictement valide RFC 8259 (sans NaN) avec compression GZIP et CORS."""
-        if isinstance(data, (bytes, bytearray)):
-            payload = bytes(data)
+        accepts_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+        use_gzip = False
+        if accepts_gzip and precompressed_gzip is not None:
+            payload = precompressed_gzip
+            use_gzip = True
         else:
-            clean_data = sanitize_for_json(data)
-            payload = json.dumps(clean_data, default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
-
-        use_gzip = "gzip" in (self.headers.get("Accept-Encoding") or "").lower() and len(payload) > 1024
-        if use_gzip:
-            payload = gzip.compress(payload, compresslevel=5)
+            if isinstance(data, (bytes, bytearray)):
+                payload = bytes(data)
+            else:
+                clean_data = sanitize_for_json(data)
+                payload = json.dumps(clean_data, default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
+            if accepts_gzip and len(payload) > 1024:
+                payload = gzip.compress(payload, compresslevel=5)
+                use_gzip = True
 
         self.send_response(status_code)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -436,7 +449,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     custom_provider=provider
                 )
                 _BATCH_AI_JOB["last_result"] = res
-                _CACHED_LISTINGS_PAYLOAD = None
+                invalidate_listings_cache()
             except Exception as e:
                 logger.error(f"Erreur batch IA worker : {e}")
                 _BATCH_AI_JOB["last_result"] = {"success": False, "error": str(e)}
@@ -516,8 +529,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             custom_provider=body.get("provider")
         )
         if not str(result.get("id") or "").startswith(("text_", "custom_")):
-            with _CACHE_LOCK:
-                _CACHED_LISTINGS_PAYLOAD = None
+            invalidate_listings_cache()
         self._send_json({"success": True, "data": result})
 
     def handle_post_ai_chat(self):
@@ -548,22 +560,19 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
     def handle_post_ai_cache_clear(self):
         """Réinitialise le cache DuckDB des enrichissements IA et invalide le cache HTTP."""
-        global _CACHED_LISTINGS_PAYLOAD
         cleared = clear_ai_cache()
-        with _CACHE_LOCK:
-            _CACHED_LISTINGS_PAYLOAD = None
+        invalidate_listings_cache()
         self._send_json({"success": cleared, "message": "Cache d'enrichissement IA vidé avec succès."})
 
     def handle_post_enrich_geoloc(self):
         """Déclenche l'enrichissement haute précision EXIF / REFIL / Cadastre en arrière-plan."""
         def _bg_enrich():
-            global _CACHED_LISTINGS_PAYLOAD
             try:
                 from src.analysis.geo_precision_enricher import GeoPrecisionEnricher
                 enricher = GeoPrecisionEnricher()
                 res = enricher.enrich_database_table(max_exif_downloads=50)
                 logger.info(f"Enrichissement haute précision terminé : {res}")
-                _CACHED_LISTINGS_PAYLOAD = None
+                invalidate_listings_cache()
             except Exception as ex:
                 logger.error(f"Erreur enrichissement geo background : {ex}")
 
@@ -571,8 +580,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
         self._send_json({"success": True, "message": "Enrichissement haute précision lancé en arrière-plan"})
 
     def handle_get_listings(self):
-        """Renvoie les annonces réelles stockées dans DuckDB formatées pour le frontend."""
-        global _CACHED_LISTINGS_PAYLOAD
+        """Renvoie les annonces réelles stockées dans DuckDB formatées pour le frontend (avec cache GZIP pré-calculé + verrou anti-stampede)."""
+        global _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP
         try:
             parsed_url = urllib.parse.urlparse(self.path)
             query_params = urllib.parse.parse_qs(parsed_url.query)
@@ -583,83 +592,115 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 except (ValueError, TypeError):
                     limit_val = None
 
-            if not limit_val and "refresh" not in query_params:
+            use_cache = (not limit_val and "refresh" not in query_params)
+            if use_cache:
                 with _CACHE_LOCK:
                     cached_bytes = _CACHED_LISTINGS_PAYLOAD
+                    cached_gz = _CACHED_LISTINGS_GZIP
                 if cached_bytes is not None:
-                    return self._send_json(cached_bytes)
+                    return self._send_json(cached_bytes, precompressed_gzip=cached_gz)
 
-            db = PropertyDatabase(read_only=True)
-            if limit_val and limit_val > 0:
-                safe_lim = min(limit_val, 50000)
-                df = db.query(
-                    """
-                    SELECT * FROM listings 
-                    WHERE is_active = TRUE 
-                    ORDER BY CASE WHEN initial_price_xpf > price_xpf THEN 0 ELSE 1 END, scraped_at DESC, id DESC 
-                    LIMIT ?
-                    """,
-                    [safe_lim],
-                )
-            else:
-                df = db.query("""
-                    SELECT * FROM listings 
-                    WHERE is_active = TRUE 
-                    ORDER BY CASE WHEN initial_price_xpf > price_xpf THEN 0 ELSE 1 END, scraped_at DESC, id DESC
-                """)
+            with _BUILD_LISTINGS_LOCK:
+                # Double-check après acquisition du verrou pour éviter tout calcul en double lors de requêtes simultanées
+                if use_cache:
+                    with _CACHE_LOCK:
+                        cached_bytes = _CACHED_LISTINGS_PAYLOAD
+                        cached_gz = _CACHED_LISTINGS_GZIP
+                    if cached_bytes is not None:
+                        return self._send_json(cached_bytes, precompressed_gzip=cached_gz)
 
+                payload_bytes, gz_bytes = self.build_listings_payload_bytes(limit_val=limit_val)
+                if not limit_val:
+                    with _CACHE_LOCK:
+                        _CACHED_LISTINGS_PAYLOAD = payload_bytes
+                        _CACHED_LISTINGS_GZIP = gz_bytes
+                return self._send_json(payload_bytes, precompressed_gzip=gz_bytes)
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des annonces : {e}")
+            self._send_json({"success": False, "error": str(e)}, status_code=500)
 
-            # Pré-chargement de l'historique complet des prix ordonné chronologiquement
-            history_by_listing: Dict[str, List[Dict[str, Any]]] = {}
-            try:
-                hist_df = db.query("""
-                    SELECT listing_id, price_xpf, price_eur, event_type, price_change_xpf, price_change_pct, recorded_at
-                    FROM listing_price_history
-                    ORDER BY recorded_at ASC
-                """)
-                for _, h_row in hist_df.iterrows():
-                    l_id = str(h_row["listing_id"])
-                    if l_id not in history_by_listing:
-                        history_by_listing[l_id] = []
-                    history_by_listing[l_id].append(h_row.to_dict())
-            except Exception as e:
-                logger.warning(f"Impossible de charger l'historique des prix : {e}")
+    @staticmethod
+    def build_listings_payload_bytes(limit_val: Optional[int] = None) -> tuple[bytes, bytes]:
+        """Construit et compresse le payload JSON complet des annonces actives (utilisable en préchauffage au démarrage)."""
+        db = PropertyDatabase(read_only=True)
+        if limit_val and limit_val > 0:
+            safe_lim = min(limit_val, 50000)
+            df = db.query(
+                """
+                SELECT * FROM listings 
+                WHERE is_active = TRUE 
+                ORDER BY CASE WHEN initial_price_xpf > price_xpf THEN 0 ELSE 1 END, scraped_at DESC, id DESC 
+                LIMIT ?
+                """,
+                [safe_lim],
+            )
+        else:
+            df = db.query("""
+                SELECT * FROM listings 
+                WHERE is_active = TRUE 
+                ORDER BY CASE WHEN initial_price_xpf > price_xpf THEN 0 ELSE 1 END, scraped_at DESC, id DESC
+            """)
 
-            # Pré-chargement des enrichissements sémantiques IA persistés en DuckDB
-            ai_enrichments_by_listing: Dict[str, Dict[str, Any]] = {}
-            try:
-                ai_df = db.query("""
-                    SELECT listing_id, model_version, enriched_at, extracted_contacts_json, structured_sections_json, raw_response_json
-                    FROM listing_ai_enrichment
-                """)
-                for _, a_row in ai_df.iterrows():
-                    al_id = str(a_row["listing_id"])
-                    c_json = a_row.get("extracted_contacts_json")
-                    s_json = a_row.get("structured_sections_json")
-                    r_json = a_row.get("raw_response_json")
-                    contacts_list = json.loads(str(c_json)) if pd.notna(c_json) and str(c_json).strip() else []
-                    sections_list = json.loads(str(s_json)) if pd.notna(s_json) and str(s_json).strip() else []
-                    raw_resp_dict = {}
-                    if pd.notna(r_json) and str(r_json).strip():
-                        try:
-                            raw_resp_dict = json.loads(str(r_json))
-                        except Exception:
-                            raw_resp_dict = {}
-                    ai_enrichments_by_listing[al_id] = {
-                        "model": str(a_row.get("model_version") or "IA"),
-                        "enriched_at": str(a_row.get("enriched_at") or ""),
-                        "direct_contacts": contacts_list,
-                        "sections": sections_list,
-                        "technical_specs": raw_resp_dict.get("technical_specs", {}) if isinstance(raw_resp_dict, dict) else {},
-                        "key_highlights": raw_resp_dict.get("key_highlights", []) if isinstance(raw_resp_dict, dict) else [],
-                        "agency_metadata": raw_resp_dict.get("agency_metadata", {}) if isinstance(raw_resp_dict, dict) else {},
-                    }
-            except Exception as e:
-                logger.debug(f"Aucun cache IA chargé : {e}")
+        # Pré-chargement de l'historique complet des prix ordonné chronologiquement
+        history_by_listing: Dict[str, List[Dict[str, Any]]] = {}
+        try:
+            hist_df = db.query("""
+                SELECT listing_id, price_xpf, price_eur, event_type, price_change_xpf, price_change_pct, recorded_at
+                FROM listing_price_history
+                ORDER BY recorded_at ASC
+            """)
+            for h_row in hist_df.to_dict(orient="records"):
+                l_id = str(h_row["listing_id"])
+                history_by_listing.setdefault(l_id, []).append(h_row)
+        except Exception as e:
+            logger.warning(f"Impossible de charger l'historique des prix : {e}")
 
+        # Pré-chargement des enrichissements sémantiques IA persistés en DuckDB
+        ai_enrichments_by_listing: Dict[str, Dict[str, Any]] = {}
+        try:
+            ai_df = db.query("""
+                SELECT listing_id, model_version, enriched_at, extracted_contacts_json, structured_sections_json, raw_response_json
+                FROM listing_ai_enrichment
+            """)
+            for a_row in ai_df.to_dict(orient="records"):
+                al_id = str(a_row["listing_id"])
+                c_json = a_row.get("extracted_contacts_json")
+                s_json = a_row.get("structured_sections_json")
+                r_json = a_row.get("raw_response_json")
+                contacts_list = json.loads(str(c_json)) if pd.notna(c_json) and str(c_json).strip() else []
+                sections_list = json.loads(str(s_json)) if pd.notna(s_json) and str(s_json).strip() else []
+                raw_resp_dict = {}
+                if pd.notna(r_json) and str(r_json).strip():
+                    try:
+                        raw_resp_dict = json.loads(str(r_json))
+                    except Exception:
+                        raw_resp_dict = {}
+                ai_enrichments_by_listing[al_id] = {
+                    "model": str(a_row.get("model_version") or "IA"),
+                    "enriched_at": str(a_row.get("enriched_at") or ""),
+                    "direct_contacts": contacts_list,
+                    "sections": sections_list,
+                    "technical_specs": raw_resp_dict.get("technical_specs", {}) if isinstance(raw_resp_dict, dict) else {},
+                    "key_highlights": raw_resp_dict.get("key_highlights", []) if isinstance(raw_resp_dict, dict) else [],
+                    "agency_metadata": raw_resp_dict.get("agency_metadata", {}) if isinstance(raw_resp_dict, dict) else {},
+                }
+        except Exception as e:
+            logger.debug(f"Aucun cache IA chargé : {e}")
+
+        return NCImmoAPIHandler._assemble_listings_payload(df, history_by_listing, ai_enrichments_by_listing)
+
+    @staticmethod
+    def _assemble_listings_payload(
+        df: pd.DataFrame,
+        history_by_listing: Dict[str, List[Dict[str, Any]]],
+        ai_enrichments_by_listing: Dict[str, Dict[str, Any]],
+    ) -> tuple[bytes, bytes]:
+        if True:
             listings = []
             now = datetime.now(timezone.utc)
+            now_ts = pd.Timestamp.now().tz_localize(None)
             geo_ref = get_geo_referential()
+            records = df.to_dict(orient="records")
 
             COMMUNE_MAP = {
                 "NOUMEA": "Nouméa",
@@ -672,7 +713,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             sector_pm2_buckets: Dict[tuple, List[float]] = {}
             commune_pm2_buckets: Dict[tuple, List[float]] = {}
             global_pm2_buckets: Dict[str, List[float]] = {"VENTE": [], "LOCATION": []}
-            for _, mrow in df.iterrows():
+            for mrow in records:
                 m_trans = "LOCATION" if "LOCAT" in str(mrow.get("transaction_type") or "").upper() else "VENTE"
                 m_comm = str(mrow.get("commune") or "NOUMEA").upper()
                 m_ptype = str(mrow.get("property_type") or "AUTRE").upper()
@@ -698,7 +739,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                 "LOCATION": float(np.median(global_pm2_buckets["LOCATION"])) if global_pm2_buckets["LOCATION"] else 1_650.0,
             }
 
-            for _, row in df.iterrows():
+            for row in records:
                 # 1. Extraction image : priorité absolue à la colonne image_url réelle
                 desc = fix_mojibake(row.get("description") or "")
                 raw_img = row.get("image_url")
@@ -1364,13 +1405,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
             clean_payload = {"success": True, "count": len(listings), "data": listings}
             payload_bytes = json.dumps(sanitize_for_json(clean_payload), default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
-            if not limit_val:
-                with _CACHE_LOCK:
-                    _CACHED_LISTINGS_PAYLOAD = payload_bytes
-            self._send_json(payload_bytes)
-        except Exception as e:
-            logger.error(f"Erreur lors de la récupération des annonces : {e}")
-            self._send_json({"success": False, "error": str(e)}, status_code=500)
+            gz_bytes = gzip.compress(payload_bytes, compresslevel=5)
+            return payload_bytes, gz_bytes
 
     def handle_get_parcel_polygon(self):
         """
@@ -1788,8 +1824,7 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             source_filter=source_filter
         )
 
-        global _CACHED_LISTINGS_PAYLOAD
-        _CACHED_LISTINGS_PAYLOAD = None
+        invalidate_listings_cache()
 
         # Exporte les snapshots statiques et préchauffe le cache en arrière-plan
         def _sync_static_files():
@@ -1820,6 +1855,22 @@ def run_server():
     httpd = ThreadingHTTPServer(server_address, NCImmoAPIHandler)
     httpd.daemon_threads = True
     logger.info(f"Serveur API & Dashboard Sentinel démarré sur http://127.0.0.1:{PORT}")
+
+    # Préchauffage immédiat du cache /api/listings (JSON + GZIP) en arrière-plan au démarrage
+    def _prewarm_cache():
+        global _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP
+        t0 = time.time()
+        try:
+            with _BUILD_LISTINGS_LOCK:
+                payload_bytes, gz_bytes = NCImmoAPIHandler.build_listings_payload_bytes()
+                with _CACHE_LOCK:
+                    _CACHED_LISTINGS_PAYLOAD = payload_bytes
+                    _CACHED_LISTINGS_GZIP = gz_bytes
+            logger.info(f"Cache /api/listings préchauffé en {time.time() - t0:.2f}s ({len(gz_bytes):,} octets GZIP).")
+        except Exception as e:
+            logger.warning(f"Erreur préchauffage cache : {e}")
+
+    threading.Thread(target=_prewarm_cache, daemon=True).start()
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

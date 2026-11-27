@@ -103,8 +103,16 @@ def test_ask_ai_chat_deterministic():
     assert "parking" in resp_parking["answer"].lower() or "stationnement" in resp_parking["answer"].lower()
 
 
-def test_ai_cache_operations():
-    """Vérifie les opérations sur le cache DuckDB."""
+def test_ai_cache_operations(tmp_path, monkeypatch):
+    """Vérifie les opérations sur le cache DuckDB sur une base isolée (ne touche jamais la prod)."""
+    import duckdb
+    import src.processing.ai_enricher as ai_mod
+
+    temp_db = tmp_path / "test_ai_cache.duckdb"
+    with duckdb.connect(str(temp_db)) as con:
+        con.execute("CREATE TABLE listings (id VARCHAR PRIMARY KEY)")
+    monkeypatch.setattr(ai_mod, "DB_PATH", temp_db)
+
     stats = get_ai_cache_stats()
     assert "cached_count" in stats
     cleared = clear_ai_cache()
@@ -442,12 +450,38 @@ def test_villa_f4_kone_immonc_5332720_ai_reconciliation():
     assert any("garage" == it.lower() for it in sec_by_key["stationnement_annexes"])
 
 
-def test_batch_enrich_listings_force_all_rescan():
+def test_batch_enrich_listings_force_all_rescan(tmp_path, monkeypatch):
     """
     Valide que batch_enrich_listings permet de forcer la ré-analyse complète
-    même pour les annonces déjà enrichies (force_all=True / only_missing=False).
+    même pour les annonces déjà enrichies (force_all=True / only_missing=False)
+    sur une base isolée (sans toucher la base de production).
     """
+    import duckdb
+    import src.processing.ai_enricher as ai_mod
     from src.processing.ai_enricher import batch_enrich_listings, get_ai_cache_stats
+
+    temp_db = tmp_path / "test_batch_ai.duckdb"
+    with duckdb.connect(str(temp_db)) as con:
+        con.execute("""
+            CREATE TABLE listings (
+                id VARCHAR PRIMARY KEY,
+                title VARCHAR,
+                property_type VARCHAR,
+                commune VARCHAR,
+                quartier VARCHAR,
+                price_xpf BIGINT,
+                description VARCHAR,
+                agency_name VARCHAR,
+                scraped_at TIMESTAMP,
+                is_active BOOLEAN
+            )
+        """)
+        for i in range(1, 6):
+            con.execute(
+                "INSERT INTO listings VALUES (?, ?, 'APPARTEMENT', 'NOUMEA', 'Anse Vata', 25000000, ?, 'Agence Test', CURRENT_TIMESTAMP, TRUE)",
+                [f"test_{i}", f"Appartement F3 #{i}", f"Bel appartement F3 climatisé avec terrasse de 15 m² et parking #{i}."]
+            )
+    monkeypatch.setattr(ai_mod, "DB_PATH", temp_db)
 
     # 1. Premier passage sur 5 annonces
     res1 = batch_enrich_listings(limit=5, only_missing=False, force_all=True, custom_provider="deterministic")
