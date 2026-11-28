@@ -257,26 +257,37 @@ CATEGORY_DEFINITIONS = [
         "keywords": [
             "loyer", "charges", "dépôt de garantie", "depot de garantie", "caution",
             "bail", "disponible", "disponibilité", "disponibilite", "honoraires",
-            "garant", "candidature", "dossier", "entrée", "entree", "option", "meublé",
-            "non meublé", "non-meublé", "charges comprises", "hors charges", "prix :"
+            "garant", "candidature", "dossier", "entrée dans les lieux", "frais d'entrée",
+            "option", "meublé", "non meublé", "non-meublé", "charges comprises", "hors charges", "prix :"
         ]
     }
 ]
+
+_DS_CP1252_TRANS = str.maketrans({
+    "\x80": "€", "\x85": "...", "\x91": "'", "\x92": "'",
+    "\x93": '"', "\x94": '"', "\x95": "•", "\x96": "–", "\x97": "—",
+})
 
 
 def strip_technical_noise(raw_text: str) -> str:
     """
     Élimine dès l'entrée toutes les pollutions techniques :
+    - Octets Windows-1252 (\x80-\x9f, ex: \x96)
     - Balises techniques [IMG: https://...]
     - Bannière promotionnelle statique immonc (<h5>ideal investissement...</h5><h4>f4 avec jardin</h4>)
+    - Hashtags Instagram / réseaux sociaux (#immobiliernc #noumea ...)
     - Entités HTML (&nbsp;, &rsquo;, etc.)
     """
     if not raw_text:
         return ""
-    s = re.sub(r'\[IMG:\s*https?://[^\]]+\]\s*', '', raw_text, flags=re.IGNORECASE)
+    s = str(raw_text).translate(_DS_CP1252_TRANS)
+    s = re.sub(r'[\x80-\x9f]', ' ', s)
+    s = re.sub(r'\[IMG:\s*https?://[^\]]+\]\s*', '', s, flags=re.IGNORECASE)
     s = IMMONC_PROMO_BANNER_REGEX.sub('', s)
     s = IMMONC_PROMO_TEXT_REGEX.sub('', s)
     s = html.unescape(s)
+    # Retrait des suites de hashtags réseaux sociaux (ex: "#immobilier #noumea #avendre ...")
+    s = re.sub(r'(?:^|\s)(?:#[A-Za-zÀ-ÿ0-9_]{2,}\s*){2,}', ' ', s)
     # Nettoyage des descriptions synthétiques immonc contenant 'None' ou des blocs Contact vides
     s = re.sub(
         r'\bAnnonce\s+(Maison|Villa|Appartement|Terrain|Local(?:\s+commercial)?|Immeuble|Dock|Bureau|Propri[ée]t[ée]|Colocation|Bien(?:\s+meubl[ée])?|Autre)\s+None\b',
@@ -1235,29 +1246,52 @@ def pre_segment_raw_lines(raw_text: str) -> List[str]:
 
 def split_body_and_footer(lines: List[str]) -> Tuple[List[str], List[str]]:
     """
-    Sépare étanchément le corps descriptif du bien du bloc commercial de signature (Footer Boundary).
+    Sépare étanchément le corps descriptif du bien du bloc commercial de signature (Footer Boundary),
+    sans jamais avaler le descriptif principal sur les annonces compactes / mono-bloc.
     """
     if not lines:
         return [], []
 
-    footer_start_idx = None
+    body_acc: List[str] = []
     for i, line in enumerate(lines):
         clean = line.strip()
-        if FOOTER_TRIGGER_REGEX.search(clean) and (len(clean) < 130 or FOOTER_TRIGGER_REGEX.match(clean)):
-            footer_start_idx = i
-            break
-        if i >= len(lines) - 8 or i >= len(lines) // 2:
-            if EMAIL_REGEX.search(clean) or (('tél' in clean.lower() or 'contact' in clean.lower()) and PHONE_NC_REGEX.search(clean)):
-                if i > 0 and is_likely_person_name(lines[i - 1]):
-                    footer_start_idx = i - 1
-                else:
-                    footer_start_idx = i
-                break
+        m_trig = FOOTER_TRIGGER_REGEX.search(clean)
+        if m_trig:
+            # Si le déclencheur apparaît APRÈS un descriptif substantiel sur la même ligne, couper au déclencheur !
+            if m_trig.start() >= 35:
+                prefix = clean[:m_trig.start()].strip(" -–—:;,")
+                suffix = clean[m_trig.start():].strip()
+                if prefix:
+                    body_acc.append(prefix)
+                # Garde-fou : si on est encore au tout début d'une annonce longue (ex: "Contactez-nous !" en milieu),
+                # vérifier si les lignes suivantes contiennent encore du descriptif substantiel (>= 80 chars sans tel/email)
+                rem_lines = [suffix] + lines[i + 1:]
+                remaining_body = [
+                    rl for rl in lines[i + 1:]
+                    if len(rl.strip()) >= 50 and not EMAIL_REGEX.search(rl) and not PHONE_NC_REGEX.search(rl) and not FOOTER_TRIGGER_REGEX.search(rl)
+                ]
+                if remaining_body and len(body_acc) <= 2:
+                    continue
+                return body_acc, rem_lines
+            elif len(clean) < 130 or FOOTER_TRIGGER_REGEX.match(clean):
+                # Ne pas vider entièrement l'annonce si on est en ligne 0 et qu'il reste du contenu descriptif
+                if i == 0 and len(lines) > 1:
+                    body_acc_cand = [
+                        rl for rl in lines[1:]
+                        if not FOOTER_TRIGGER_REGEX.search(rl) and not EMAIL_REGEX.search(rl)
+                    ]
+                    if body_acc_cand:
+                        continue
+                return body_acc, lines[i:]
+        if i >= len(lines) - 8 or i >= max(1, len(lines) // 2):
+            if EMAIL_REGEX.search(clean) or (('tél' in clean.lower() or 'tel' in clean.lower() or 'contact' in clean.lower() or 'renseignement' in clean.lower() or 'visite' in clean.lower()) and PHONE_NC_REGEX.search(clean)):
+                if i > 0 and body_acc and is_likely_person_name(body_acc[-1]):
+                    popped = body_acc.pop()
+                    return body_acc, [popped] + lines[i:]
+                return body_acc, lines[i:]
+        body_acc.append(line)
 
-    if footer_start_idx is not None:
-        return lines[:footer_start_idx], lines[footer_start_idx:]
-
-    return lines, []
+    return body_acc, []
 
 
 def _clean_candidate_person_name(raw_name: str) -> str:
@@ -1444,7 +1478,13 @@ def is_contact_or_boilerplate_line(line: str, direct_contacts: List[Dict[str, An
             if re.search(r'(?:visite|visiter|négociation|contact|joindre|appeler|tél|tel|mobile|:|[–—])', clean, re.IGNORECASE):
                 return True
 
-    if re.search(r'(?:visite|visiter|contacter|joindre|appeler)\s+.*(?:au|t[ée]l)?\s*[02-9]\d{1,2}[\s.]?\d{2,3}[\s.]?\d{2}', clean, re.IGNORECASE):
+    if re.search(r'(?:visite|visiter|contacter|contact|joindre|appeler|renseignements?|infos?\s+et\s+visites?|t[ée]l\.?)\b.*(?:au|t[ée]l)?\s*[02-9]\d{1,2}[\s.\-]?\d{2,3}[\s.\-]?\d{2}', clean, re.IGNORECASE):
+        return True
+
+    # Ligne courte ne contenant qu'un nom + téléphone OPT ou un footer orphelin ("Pour plus de renseignements", "Renseignements et")
+    if re.match(r'^(?:pour\s+plus\s+de\s+renseignements?|renseignements?\s+et|contact\s*&\s*visites?|visites?\s+avec\b).*$', clean, re.IGNORECASE):
+        return True
+    if len(clean) <= 65 and PHONE_NC_REGEX.search(clean) and not re.search(r'\d+\s*(?:m²|m2|ares?|ha\b|f\s*cfp|xpf|mf\b)', clean, re.IGNORECASE):
         return True
 
     return False
@@ -1513,8 +1553,9 @@ def classify_bullet_or_sentence(text: str) -> str:
     # Priorité 3 : Pièces de vie (Séjour & Cuisine)
     if any(contains_keyword(norm, k) for k in [
         "cuisine", "séjour", "sejour", "salon", "salle à manger", "buanderie",
-        "baie vitrée", "baies vitrées", "îlot", "ilot", "cafétéria", "cafeteria", "pièce de vie", "espace de vie"
-    ]):
+        "baie vitrée", "baies vitrées", "îlot", "ilot", "cafétéria", "cafeteria", "pièce de vie", "espace de vie",
+        "plaque à induction", "plaque de cuisson", "hotte aspirante", "évier", "plan de travail", "plans de travail"
+    ]) and "ponton" not in norm:
         return "pieces_de_vie"
 
     # Priorité 4 : Services & Équipements de la résidence / copropriété
@@ -1561,7 +1602,7 @@ def classify_bullet_or_sentence(text: str) -> str:
     if any(contains_keyword(norm, k) for k in [
         "terrasse", "varangue", "jardin", "jardinet", "balcon", "deck", "piscine", "cour", "véranda",
         "vue mer", "vue lagon", "vue dégagée", "vue montagne", "extérieur", "extérieurs", "espace extérieur",
-        "terrain", "parcelle", "ares", "carbet", "faré", "fare", "pergola", "barbecue"
+        "terrain", "parcelle", "ares", "carbet", "faré", "fare", "pergola", "barbecue", "ponton"
     ]):
         return "exterieurs"
 
@@ -1707,9 +1748,9 @@ def extract_technical_specs(raw_description: str, raw_specs: Optional[Dict[str, 
 
     if charges_val is None and has_valid_charge_context:
         charge_patterns = [
-            r"(?<!hors\s)(?<!sans\s)\bcharges?\s*(?:mensuelles?|de\s+copropri[eé]t[eé]|copro|locatives?)?\s*(?:\([^)]{0,40}\))?\s*[:=]?\s*(?:seulement\s+|environ\s+|de\s+|d['’]environ\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|frs?|cfp|f\b|/mois)",
-            r"(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|frs?|f)\s*(?:/\s*mois\s*)?de\s+charges?\b",
-            r"(?<!hors\s)(?<!sans\s)\bprovision\s+(?:pour\s+|sur\s+)?charges?\s*[:=]?\s*(?:de\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})\s*(?:f\s*cfp|xpf|frs?|f\b)",
+            r"(?<!hors\s)(?<!sans\s)\bcharges?\s*(?:mensuelles?|de\s+copropri[eé]t[eé]|copro|locatives?|en\s+sus)?\s*(?:\([^)]{0,40}\))?\s*[:=]?\s*(?:seulement\s+|environ\s+|de\s+|d['’]environ\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|xfp|frs?|cfp|f\b|/mois)",
+            r"(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})(?:[.,]\d{1,2})?\s*(?:f\s*cfp|xpf|xfp|frs?|f)\s*(?:/\s*mois\s*)?de\s+charges?\b",
+            r"(?<!hors\s)(?<!sans\s)\bprovision\s+(?:pour\s+|sur\s+)?charges?\s*[:=]?\s*(?:de\s+)?(\d{1,3}(?:[\s.]\d{3})+|\d{3,6})\s*(?:f\s*cfp|xpf|xfp|frs?|f\b)",
         ]
         for pat in charge_patterns:
             m_chg = re.search(pat, desc_clean, re.I)
@@ -1827,30 +1868,8 @@ def extract_technical_specs(raw_description: str, raw_specs: Optional[Dict[str, 
         except ValueError:
             pass
 
-    surf_ter_val: Optional[float] = None
-    m_land_ares = re.search(
-        r"(?:terrain|parcelle)\s*(?:clos|cl[ôo]tur[ée]|arbor[ée]|plat|paysager)?\s*(?:de|d['’]|d['’]environ)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*ares?\b",
-        desc_clean,
-        re.I
-    )
-    if m_land_ares:
-        try:
-            surf_ter_val = round(float(m_land_ares.group(1).replace(",", ".")) * 100.0, 1)
-        except ValueError:
-            pass
-    else:
-        m_land_m2 = re.search(
-            r"(?:terrain|parcelle)\s*(?:clos|cl[ôo]tur[ée]|arbor[ée]|plat)?\s*(?:de|d['’]|d['’]environ)?\s*(?:environ\s*)?(\d+(?:[.,]\d+)?)\s*(?:m²|m2)\b",
-            desc_clean,
-            re.I
-        )
-        if m_land_m2:
-            try:
-                v_l = float(m_land_m2.group(1).replace(",", "."))
-                if 50.0 <= v_l <= 500_000.0:
-                    surf_ter_val = v_l
-            except ValueError:
-                pass
+    from src.processing.cleaner import parse_terrain_surface_m2
+    surf_ter_val: Optional[float] = parse_terrain_surface_m2(desc_clean)
 
     # 7. Standing & Équipements booléens
     std_raw = raw_specs.get("standing")
@@ -2029,6 +2048,27 @@ def structure_description(raw_description: Optional[str], property_type: Optiona
                 "icon": icon,
                 "items": items
             })
+
+    # Garde-fou Zéro-Perte absolu : ne JAMAIS retourner sections=[] si raw_text contient un vrai descriptif !
+    if not sections and len(raw_text) >= 15:
+        fallback_items = []
+        for ln in [l.strip() for l in re.split(r'[\n]+|(?<=[.!?])\s+', raw_text) if l.strip()]:
+            cl = clean_line_typography(ln)
+            if cl and len(cl) >= 4 and not EMAIL_REGEX.search(cl) and not FOOTER_TRIGGER_REGEX.match(cl):
+                fallback_items.append(cl)
+        if not fallback_items:
+            cl_all = clean_line_typography(raw_text)
+            if cl_all:
+                fallback_items = [cl_all]
+        if fallback_items:
+            t_fb, ic_fb = category_titles["cadre_vie"]
+            sections.append({
+                "key": "cadre_vie",
+                "title": t_fb,
+                "icon": ic_fb,
+                "items": fallback_items[:12],
+            })
+            cleaned_lines_all.extend(fallback_items[:12])
 
     # 6. Extraire les spécifications techniques chiffrées ancrées + badges atouts flash vérifiés
     tech_specs = extract_technical_specs(raw_text)

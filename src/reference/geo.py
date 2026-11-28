@@ -219,18 +219,27 @@ class GeoReferential:
 
         norm = normalize_text(text)
 
+        # Neutralisation des pièges lexicaux courants qui ne désignent PAS un quartier :
+        # - "de belle conception / conception moderne / conception architecturale" != quartier Conception (Mont-Dore)
+        # - "rue de la baie de koutio" (à Nouméa) != quartier Koutio (Dumbéa)
+        norm_safe = re.sub(
+            r"\b(?:de\s+(?:belle\s+|haute\s+|tres\s+belle\s+)?conception|conception\s+(?:moderne|architecturale|bioclimatique|originale|recente|contemporaine|soignee|fonctionnelle|intelligente|sur\s+mesure)|sa\s+conception|en\s+cours\s+de\s+conception|rue\s+de\s+la\s+baie\s+de\s+koutio)\b",
+            " ",
+            norm,
+        )
+
         # 1b. Si le titre déclare explicitement 'à <Commune GN>' (ex: 'Terrain à Païta'),
         # restreindre le matching de quartier à cette commune pour éviter qu'un 'à 10 min de Ducos'
         # ou 'centre-ville' ne fasse basculer le bien à Nouméa !
         explicit_com: Optional[Commune] = None
-        m_com_title = re.search(r'\ba\s+(noumea|dumbea|le\s+mont\s+dore|mont\s+dore|paita)\b', norm)
+        m_com_title = re.search(r'\ba\s+(noumea|dumbea|le\s+mont\s+dore|mont\s+dore|paita)\b', norm_safe)
         if m_com_title:
             explicit_com = self.communes_map.get(m_com_title.group(1).strip())
 
         # 2. Vérifier les alias spécifiques d'abord (du plus long au plus court)
         sorted_aliases = sorted(self.aliases.items(), key=lambda x: len(x[0]), reverse=True)
         for alias, target_q in sorted_aliases:
-            if re.search(rf"\b{re.escape(alias)}\b", norm):
+            if re.search(rf"\b{re.escape(alias)}\b", norm_safe):
                 if target_q in self.quartiers_index:
                     official_name, commune_enum, q_info = self.quartiers_index[target_q]
                     if explicit_com and commune_enum != explicit_com:
@@ -240,7 +249,7 @@ class GeoReferential:
         # 3. Chercher les quartiers répertoriés (du plus long au plus court pour éviter les faux positifs)
         sorted_quartiers = sorted(self.quartiers_index.keys(), key=len, reverse=True)
         for q_key in sorted_quartiers:
-            if re.search(rf"\b{re.escape(q_key)}\b", norm):
+            if re.search(rf"\b{re.escape(q_key)}\b", norm_safe):
                 official_name, commune_enum, q_info = self.quartiers_index[q_key]
                 if explicit_com and commune_enum != explicit_com:
                     continue
@@ -250,12 +259,12 @@ class GeoReferential:
         if explicit_com:
             return explicit_com, None, None
         for com_key, com_enum in self.communes_map.items():
-            if re.search(rf"\b{re.escape(com_key)}\b", norm):
+            if re.search(rf"\b{re.escape(com_key)}\b", norm_safe):
                 return com_enum, None, None
 
         # 5. Chercher une commune de Brousse / Îles
         for b_com in self.brousse_communes:
-            if re.search(rf"\b{re.escape(b_com)}\b", norm):
+            if re.search(rf"\b{re.escape(b_com)}\b", norm_safe):
                 return Commune.AUTRE, b_com.title(), None
 
         return Commune.AUTRE, None, None

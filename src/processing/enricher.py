@@ -15,13 +15,13 @@ class ListingEnricher:
         """
         text = normalize_text(f"{listing.title} {listing.description}")
 
-        # 1. Vue mer / lagon (prime de valeur majeure dans le Grand Nouméa)
-        sea_view_regex = r"\b(vue\s*mer|vue\s*lagon|vue\s*baie|vue\s*imprenable\s*sur\s*la\s*mer|face\s*a\s*la\s*mer|front\s*de\s*mer|bord\s*de\s*mer|apercu\s*mer|acces\s*direct\s*plage)\b"
+        # 1. Vue mer / lagon (strictement vue explicite sur la mer/lagon/baie, hors simple "bord de mer" ou "proche plage")
+        sea_view_regex = r"\b(vue\s*(?:sur\s+la\s+)?mer|vue\s*(?:sur\s+le\s+)?lagon|vue\s*(?:sur\s+la\s+)?baie|vue\s*imprenable\s*sur\s*la\s*mer|vue\s*panoramique\s*(?:sur\s+la\s+)?mer|apercu\s*mer)\b"
         listing.has_sea_view = bool(listing.has_sea_view) or bool(re.search(sea_view_regex, text))
 
-        # 2. Piscine (exclut 'piscinable' et 'sans piscine')
-        pool_regex = r"\b(piscine|bassin\s+de\s+nage|spa\s*pool|couloir\s*de\s*nage|jacuzzi)\b"
-        has_pool_neg = bool(re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non)\b", text))
+        # 2. Piscine (exclut 'piscinable', 'sans piscine', 'dalle de piscine', et 'jacuzzi' seul)
+        pool_regex = r"\b(piscine|bassin\s+de\s+nage|couloir\s+de\s+nage)\b"
+        has_pool_neg = bool(re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non|dalle\s+(?:de\s+)?piscine|projet\s+de\s+piscine|piscinable)\b", text))
         listing.has_pool = bool(listing.has_pool) or (bool(re.search(pool_regex, text)) and not has_pool_neg)
 
         # 3. Climatisation (confort thermique essentiel en climat tropical calédonien)

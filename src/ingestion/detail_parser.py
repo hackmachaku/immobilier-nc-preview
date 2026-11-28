@@ -160,9 +160,9 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
                     if num_str and 500 <= int(num_str) <= 150_000:
                         charges_mensuelles = int(num_str)
 
-        # Cadre de vie
+        # Cadre de vie (strictement vue mer/lagon/baie, pas simple proximité plage)
         if "cadre" in cat_lower or "vue" in cat_lower:
-            if "mer" in items_str or "lagon" in items_str or "baie" in items_str:
+            if any(k in items_str for k in ("vue mer", "vue lagon", "vue baie", "vue sur la mer")) and "non" not in items_str:
                 has_sea_view = True
 
         # Annexe
@@ -172,29 +172,42 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
                 m_ter = re.search(r"terrasse\s*[:\s]?\s*(\d+(?:[\.,]\d+)?)\s*(?:m2|m²)?", it, re.IGNORECASE)
                 if m_ter:
                     try:
-                        surface_terrasse = float(m_ter.group(1).replace(",", "."))
+                        v_ter = float(m_ter.group(1).replace(",", "."))
+                        if v_ter > 0:
+                            surface_terrasse = v_ter
                     except ValueError:
                         pass
-                if "clim" in it.lower():
+                if "clim" in it.lower() and not re.search(r"\bnon\b", it, re.IGNORECASE):
                     has_ac = True
 
-        # Salle de bain
+        # Salle de bain / Salle d'eau
         if "bain" in cat_lower or "eau" in cat_lower:
+            sdb_total = 0
             for it in items:
-                m_sdb = re.search(r"salle\s*d['’]eau\s*[:\s]?\s*(\d+)", it, re.IGNORECASE)
+                m_sdb = re.search(r"salles?\s*(?:d['’]eau|de\s*bains?)\s*[:\s]?\s*(\d+)", it, re.IGNORECASE)
                 if m_sdb:
                     try:
-                        bathrooms = int(m_sdb.group(1))
+                        sdb_total += int(m_sdb.group(1))
                     except ValueError:
                         pass
+            if sdb_total > 0:
+                bathrooms = sdb_total
+
+        # Piscine
+        if "piscine" in cat_lower:
+            for it in items:
+                if "piscine" in it.lower() and not re.search(r"\bnon\b", it, re.IGNORECASE):
+                    has_pool = True
 
         # Garage / Stationnement
         if "garage" in cat_lower or "parking" in cat_lower or "stationnement" in cat_lower:
             for it in items:
-                m_park = re.search(r"(?:carport|parking|garage|box|place)\s*[:\s]?\s*(\d+)", it, re.IGNORECASE)
+                m_park = re.search(r"(?:carport|parking(?:\s+couvert)?|garage(?:\s+ferm[eé])?|box|place)\s*[:\s]?\s*(\d+)", it, re.IGNORECASE)
                 if m_park:
                     try:
-                        parkings = int(m_park.group(1))
+                        pv = int(m_park.group(1))
+                        if 1 <= pv <= 20:
+                            parkings = max(parkings or 0, pv)
                     except ValueError:
                         pass
             if parkings is None and len(items) > 0:
@@ -204,10 +217,12 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
     blob_full = f"{full_description} {url}".lower()
 
     if surface_terrasse is None:
-        m_t = re.search(r"terrasse\s*(?:d['’]environ|de)?\s*(\d+(?:[\.,]\d+)?)\s*(?:m2|m²)", blob_full)
+        m_t = re.search(r"(?:terrasse|varangue)\s*(?:couverte|privative)?\s*(?:d['’]environ|de)?\s*(\d+(?:[\.,]\d+)?)\s*(?:m2|m²)", blob_full)
         if m_t:
             try:
-                surface_terrasse = float(m_t.group(1).replace(",", "."))
+                v_ter = float(m_t.group(1).replace(",", "."))
+                if 1.0 <= v_ter <= 500.0:
+                    surface_terrasse = v_ter
             except ValueError:
                 pass
 
@@ -216,11 +231,11 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
         if m_et_text:
             etage = m_et_text.group(1)
 
-    if not has_sea_view and re.search(r"\b(vue\s*mer|vue\s*lagon|vue\s*baie|front\s*de\s*mer|bord\s*de\s*mer)\b", blob_full):
+    if not has_sea_view and re.search(r"\b(vue\s*mer|vue\s*lagon|vue\s*baie|vue\s*sur\s*la\s*mer|vue\s*imprenable\s*sur\s*la\s*mer|apercu\s*mer|aperçu\s*mer)\b", blob_full):
         has_sea_view = True
     if not has_ac and re.search(r"\b(climatis\w*|climatiseur\w*|clims?)\b", blob_full):
         has_ac = True
-    if not has_pool and re.search(r"\b(piscine|bassin\s+de\s+nage|couloir\s+de\s+nage)\b", blob_full) and not re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non)\b", blob_full):
+    if not has_pool and re.search(r"\b(piscine|bassin\s+de\s+nage|couloir\s+de\s+nage)\b", blob_full) and not re.search(r"\b(sans\s+piscine|pas\s+de\s+piscine|piscine\s*:\s*non|dalle\s+(?:de\s+)?piscine|projet\s+de\s+piscine|piscinable)\b", blob_full):
         has_pool = True
     if not is_secured and re.search(r"\b(s[eé]curis\w*|digicode|gardien|interphone|visiophone)\b", blob_full):
         is_secured = True
@@ -251,13 +266,17 @@ def parse_immonc_detail_html(html_content: str, url: str = "") -> Dict[str, Any]
         else:
             negotiator_phone = f"+687 {raw_num}"
 
-    # 5. Photos multiples
+    # 5. Photos multiples (normalisation www + remplacement /photos_vignette/ + déduplication stricte par nom de fichier)
     photos = []
+    seen_photo_keys = set()
     for img in soup.find_all("img"):
-        src = img.get("src") or img.get("data-src") or ""
+        src = (img.get("src") or img.get("data-src") or "").strip()
         if "/photos/" in src and src.startswith("http"):
-            big_src = src.replace("/photos_medium/", "/photos_big/").replace("/photos_small/", "/photos_big/")
-            if big_src not in photos:
+            big_src = re.sub(r"/photos_(?:medium|small|vignette|thumb)/", "/photos_big/", src)
+            big_src = re.sub(r"^https?://(?:www\.)?immonc\.com/", "https://www.immonc.com/", big_src, flags=re.IGNORECASE)
+            fname_key = big_src.split("?")[0].rstrip("/").rsplit("/", 1)[-1].lower()
+            if fname_key and fname_key not in seen_photo_keys:
+                seen_photo_keys.add(fname_key)
                 photos.append(big_src)
 
     return {

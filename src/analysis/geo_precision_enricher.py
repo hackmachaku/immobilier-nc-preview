@@ -515,8 +515,10 @@ class GeoPrecisionEnricher:
         lot_num = self.extract_cadastre_lot_reference(text_corpus)
         if lot_num:
             from src.analysis.cadastre_enrichment import get_cadastre_index
+            decl_ter = item.get("surface_terrain_m2") or item.get("surfaceTerrain")
             parcel_match = get_cadastre_index().find_parcel_by_lot(
-                commune=com, lot_num=lot_num, quartier=q, text_hint=text_corpus
+                commune=com, lot_num=lot_num, quartier=q, text_hint=text_corpus,
+                declared_surface_m2=float(decl_ter) if decl_ter else None,
             )
             if parcel_match:
                 enriched["precision_score"] = 70
@@ -569,7 +571,7 @@ class GeoPrecisionEnricher:
 
         with _DB_LOCK, db.get_connection(read_only=True) as con:
             rows = con.execute("""
-                SELECT id, title, description, source, image_url, commune, quartier, property_type
+                SELECT id, title, description, source, image_url, commune, quartier, property_type, surface_terrain_m2
                 FROM listings
                 WHERE is_active = TRUE;
             """).fetchall()
@@ -581,10 +583,11 @@ class GeoPrecisionEnricher:
         now = datetime.now(timezone.utc)
         items_to_download_exif = []
         for r in rows:
-            lid, title, desc, src, img_url, com, q, prop_type = r
+            lid, title, desc, src, img_url, com, q, prop_type, surf_ter = r
             item_dict = {
                 "id": lid, "title": title, "description": desc, "source": src,
-                "image_url": img_url, "commune": com, "quartier": q, "property_type": prop_type
+                "image_url": img_url, "commune": com, "quartier": q, "property_type": prop_type,
+                "surface_terrain_m2": surf_ter,
             }
             text_corpus = f"{title or ''} {desc or ''}"
 
@@ -604,7 +607,8 @@ class GeoPrecisionEnricher:
                 ))
             elif lot_num:
                 parcel_match = cad_idx.find_parcel_by_lot(
-                    commune=com, lot_num=lot_num, quartier=q, text_hint=text_corpus
+                    commune=com, lot_num=lot_num, quartier=q, text_hint=text_corpus,
+                    declared_surface_m2=float(surf_ter) if surf_ter else None,
                 )
                 if parcel_match:
                     lotiss = parcel_match.get("lotissement") or parcel_match.get("section") or com or "NC"

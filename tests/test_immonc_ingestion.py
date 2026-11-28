@@ -45,7 +45,7 @@ def test_parse_immonc_item_vente_maison(scraper, cleaner):
     assert raw.raw_price == "28000000 F CFP"
     assert raw.agency_name == "Acti Immobilier"
     assert "piscine" in raw.facilities
-    assert raw.image_url.startswith("https://immonc.com/photos/")
+    assert raw.image_url.startswith("https://www.immonc.com/photos/photos_big/")
     assert len(json.loads(raw.images_json)) == 2
 
     cleaned = cleaner.clean(raw)

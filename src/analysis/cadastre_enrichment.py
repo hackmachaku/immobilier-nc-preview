@@ -365,19 +365,22 @@ class CadastreSpatialIndex:
         commune: str | None,
         lot_num: str,
         quartier: str | None = None,
-        text_hint: str = ""
+        text_hint: str = "",
+        declared_surface_m2: float | None = None,
     ) -> dict[str, Any] | None:
         """
         Résout un numéro de lot cadastral dans parcelles_nc.parquet.
-        Ne retourne une parcelle certifiée QUE si une correspondance fiable est trouvée
-        (match exact de num_lot dans la commune + désambiguïsation par lotissement/quartier).
+        Ne retourne une parcelle certifiée QUE si une correspondance fiable est trouvée :
+        - Match exact de num_lot dans la commune + désambiguïsation par lotissement/quartier
+        - Garde-fou spatial strict : distance <= 2,5 km du centroïde du quartier annoncé (si connu)
+        - Garde-fou de contenance : si surface terrain déclarée, ratio dans [0,45x ; 2,2x]
         """
         if not lot_num:
             return None
         if not self.is_loaded:
             self.load()
 
-        from src.reference.geo import normalize_text
+        from src.reference.geo import get_geo_referential, normalize_text
         lot_clean = str(lot_num).strip().upper().lstrip("0")
         if not lot_clean:
             return None
@@ -395,16 +398,42 @@ class CadastreSpatialIndex:
         if not pool:
             return None
 
+        # Centroïde du quartier annoncé (si présent dans le référentiel) pour contrôle anti-faux-positifs
+        q_lat, q_lon = None, None
+        if quartier and str(quartier).strip().lower() not in ("secteur calédonien", "secteur", "none", "nan", ""):
+            try:
+                geo_ref = get_geo_referential()
+                qk = normalize_text(str(quartier))
+                q_info = geo_ref.quartiers_index.get(qk) or (
+                    geo_ref.quartiers_index.get(geo_ref.aliases[qk]) if qk in geo_ref.aliases else None
+                )
+                if q_info:
+                    q_dict = q_info[-1] if isinstance(q_info, tuple) else q_info
+                    if isinstance(q_dict, dict):
+                        q_lat = q_dict.get("latitude")
+                        q_lon = q_dict.get("longitude")
+            except Exception:
+                pass
+
+        def _passes_guards(p: dict[str, Any]) -> bool:
+            if q_lat is not None and q_lon is not None:
+                dist_km = math.hypot((p["lat"] - q_lat) * 111.0, (p["lon"] - q_lon) * 103.0)
+                if dist_km > 2.5:
+                    return False
+            if declared_surface_m2 and declared_surface_m2 > 0 and p.get("surface_m2"):
+                ratio = float(p["surface_m2"]) / float(declared_surface_m2)
+                if ratio < 0.45 or ratio > 2.2:
+                    return False
+            return True
+
         candidates = []
         for p in pool:
             p_lot = str(p.get("num_lot") or "").strip().upper().lstrip("0")
-            if p_lot == lot_clean:
+            if p_lot == lot_clean and _passes_guards(p):
                 candidates.append(p)
 
         if not candidates:
             return None
-        if len(candidates) == 1:
-            return candidates[0]
 
         # Désambiguïsation stricte par nom de lotissement ou section mentionné dans l'annonce
         hint_norm = normalize_text(f"{quartier or ''} {text_hint}")
@@ -414,7 +443,6 @@ class CadastreSpatialIndex:
             sec_norm = normalize_text(str(p.get("section") or ""))
             score = 0
             if lotiss_norm and len(lotiss_norm) >= 4:
-                # Vérifier les mots significatifs du lotissement (hors "lotissement")
                 l_words = [w for w in lotiss_norm.split() if len(w) >= 4 and w not in ("lotissement", "secteur", "domaine")]
                 if l_words and any(re.search(rf"\b{re.escape(w)}\b", hint_norm) for w in l_words):
                     score += 10
@@ -429,6 +457,10 @@ class CadastreSpatialIndex:
             scored.sort(key=lambda x: x[0], reverse=True)
             if len(scored) == 1 or scored[0][0] > scored[1][0]:
                 return scored[0][1]
+
+        # Si un seul candidat passe les garde-fous spatial + contenance ET qu'un quartier précis était confirmé
+        if len(candidates) == 1 and q_lat is not None:
+            return candidates[0]
 
         return None
 
@@ -653,7 +685,17 @@ class CadastreSpatialIndex:
             item["refilAdresse"] = None
             return item
 
-        # 1. Parcelle Cadastrale
+        # 1. Parcelle Cadastrale (certifiée)
+        prec_lvl_str = str(item.get("precisionLevel") or item.get("precision_level") or "").upper()
+        item["cadastreStatus"] = (
+            "CERTIFIE_REFIL" if prec_lvl_str == "IMMEUBLE_REFIL"
+            else ("CERTIFIE_LOT" if prec_lvl_str == "LOT_CADASTRE" else "CERTIFIE_GPS")
+        )
+        item["cadastreComment"] = (
+            "Localisation certifiée via le référentiel officiel REFIL / Cadastre NC."
+            if prec_lvl_str in ("IMMEUBLE_REFIL", "LOT_CADASTRE")
+            else "Localisation certifiée au mètre via coordonnées GPS EXIF."
+        )
         is_apt = (
             item.get("category") == "appartement"
             or item.get("propertyType") in ("APPARTEMENT", "STUDIO", "LOFT")

@@ -311,6 +311,18 @@ class PropertyDatabase:
                 direct_phone = COALESCE(EXCLUDED.direct_phone, listings.direct_phone);
             """)
 
+    def mark_listings_inactive(self, listing_ids: List[str]) -> int:
+        """Passe en is_active=FALSE les annonces confirmées supprimées/expirées sur leur portail source."""
+        if not listing_ids:
+            return 0
+        clean_ids = [str(i).strip() for i in listing_ids if i and str(i).strip()]
+        if not clean_ids:
+            return 0
+        with _DB_LOCK, self.get_connection(read_only=False) as con:
+            placeholders = ",".join(["?"] * len(clean_ids))
+            con.execute(f"UPDATE listings SET is_active = FALSE WHERE id IN ({placeholders})", clean_ids)
+        return len(clean_ids)
+
     def query(self, sql: str, params: Optional[List[Any]] = None) -> pd.DataFrame:
         """Exécute une requête SQL paramétrée de manière thread-safe et renvoie un DataFrame."""
         with _DB_LOCK:

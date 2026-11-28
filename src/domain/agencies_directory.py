@@ -553,26 +553,40 @@ def resolve_agency_name(raw_name: Optional[str], raw_mail: Optional[str] = None,
                 if dom in domain:
                     return ag["name"]
 
-    # 2. Vérification par nom direct ou alias
+    # 2. Vérification par nom direct ou alias (matching strict anti-faux-positifs)
     if clean_name:
-        name_lower = clean_name.lower()
+        name_lower = clean_name.lower().strip()
+        # Ignorer les valeurs vides, symboles ou termes génériques qui ne désignent pas une agence
+        generic_non_agency = {
+            "-", ".", "..", "none", "null", "n/a", "bien", "immo", "immobilier",
+            "agence", "particulier", "particulier nc", "particulier / immonc", "proprietaire", "propriétaire",
+        }
+        if len(name_lower) >= 3 and name_lower not in generic_non_agency:
+            for ag in NC_AGENCIES:
+                if ag["id"] == "particulier":
+                    continue
+                ag_name_low = ag["name"].lower().strip()
+                if name_lower == ag_name_low:
+                    return ag["name"]
+                for alias in ag["aliases"]:
+                    al = alias.lower().strip()
+                    if not al or len(al) < 3:
+                        continue
+                    # Exiger égalité exacte ou frontières de mots complètes (JAMAIS `name_lower in alias` qui collait 'bien' -> 'Bien-Immo')
+                    if name_lower == al or (len(al) >= 4 and re.search(rf"\b{re.escape(al)}\b", name_lower)):
+                        return ag["name"]
+
+    # 3. Vérification dans le texte de l'annonce (uniquement sur alias distinctifs >= 6 caractères, hors mention "agences s'abstenir")
+    if clean_blob and not re.search(r"agences?\s+s['’]abstenir|pas\s+d['’]agence", clean_blob):
         for ag in NC_AGENCIES:
             if ag["id"] == "particulier":
                 continue
             for alias in ag["aliases"]:
-                if alias in name_lower or name_lower in alias:
+                al = alias.lower().strip()
+                if len(al) >= 6 and re.search(rf"\b{re.escape(al)}\b", clean_blob):
                     return ag["name"]
 
-    # 3. Vérification dans le texte de l'annonce
-    if clean_blob:
-        for ag in NC_AGENCIES:
-            if ag["id"] == "particulier":
-                continue
-            for alias in ag["aliases"]:
-                if len(alias) >= 5 and re.search(rf"\b{re.escape(alias)}\b", clean_blob):
-                    return ag["name"]
-
-    if clean_name and clean_name != " ":
+    if clean_name and clean_name not in (" ", "-", ".", "None", "null"):
         return clean_name
 
     return "Particulier NC"

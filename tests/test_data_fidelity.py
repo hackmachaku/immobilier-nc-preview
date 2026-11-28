@@ -97,7 +97,7 @@ def test_cleaner_preserves_extracted_specs():
     assert cleaned.surface_habitable_m2 == 44.0  # Heuristic 50 m² must NOT override 44.0 m²
     assert cleaned.surface_terrasse_m2 == 17.0
     assert cleaned.charges_mensuelles_xpf == 12000
-    assert cleaned.etage == "4"
+    assert cleaned.etage == "4ème étage"
     assert cleaned.direct_negotiator == "Florian"
     assert cleaned.direct_phone == "+687 75.02.30"
 

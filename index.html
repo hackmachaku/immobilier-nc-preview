@@ -225,6 +225,12 @@
           Ajouter manuellement
         </button>
 
+        <!-- Button: Santé & Qualité des Données (Quality Gate) -->
+        <button onclick="openQualityModal()" id="btnQualityGateTop" class="px-3.5 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/70 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition-all" title="Tableau de bord Qualité, Vérité Terrain & Quarantaine P0">
+          <span>🛡️ Qualité</span>
+          <span id="qualityTopPill" class="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px] font-bold">...</span>
+        </button>
+
         <!-- Button: Gérer les Sources (Comme sur la capture) -->
         <button onclick="toggleView('sources')" id="btnNavSourcesTop" class="px-3.5 py-2 rounded-xl bg-[var(--card)] hover:bg-slate-800 border border-[var(--border)] text-slate-200 text-xs font-semibold flex items-center gap-1.5 transition-all">
           <svg class="w-4 h-4 text-sky-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
@@ -3666,6 +3672,16 @@
                       ${item.priceSpreadXpf > 0 ? `⚡ Écart ${(item.priceSpreadXpf >= 1000000 ? (item.priceSpreadXpf/1000000).toFixed(1)+'M' : Math.round(item.priceSpreadXpf/1000)+'k')} F (${item.duplicateCount})` : `🔗 ${item.duplicateCount} portails`}
                     </span>
                   ` : ''}
+                  ${(item.enrichedFromPortals && item.enrichedFromPortals.length > 0) ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-bold bg-teal-500/30 text-teal-100 border border-teal-400/50 backdrop-blur-md shadow-md" title="Fiche enrichie par croisement multi-sources (${escapeHtmlUi(item.enrichedFromPortals.join(', '))}) : ${escapeHtmlUi((item.enrichedFields || []).join(', '))}">
+                      ✨ Enrichi +${item.enrichedFromPortals.length}
+                    </span>
+                  ` : ''}
+                  ${item.qualityGrade ? `
+                    <span class="px-1.5 py-0.5 rounded text-[10px] font-extrabold border backdrop-blur-md shadow-sm ${item.qualityGrade === 'A' ? 'bg-emerald-500/25 text-emerald-200 border-emerald-400/50' : (item.qualityGrade === 'B' ? 'bg-sky-500/25 text-sky-200 border-sky-400/50' : 'bg-amber-500/25 text-amber-200 border-amber-400/50')}" title="Fiabilité données : Grade ${escapeHtmlUi(item.qualityGrade)} (${item.qualityScore || 0}/100)${(item.qualityFlags && item.qualityFlags.length) ? ' • ' + escapeHtmlUi(item.qualityFlags.join(' · ')) : ' • Fiche vérifiée'}">
+                      🛡️ ${escapeHtmlUi(item.qualityGrade)}·${Math.round(item.qualityScore || 0)}
+                    </span>
+                  ` : ''}
                 </div>
                 <!-- Badge prix / statut : ancré à droite, largeur maîtrisée -->
                 <div class="shrink-0 pointer-events-auto ml-1">
@@ -4275,7 +4291,7 @@
                 </div>
                 ${item.priceSpreadXpf > 0 ? `
                   <span class="px-3 py-1 rounded-full text-xs font-extrabold bg-amber-500/20 text-amber-300 border border-amber-400/50">
-                    ⚡ Écart constaté : ${formatPriceXPF(item.priceSpreadXpf)}
+                    ⚡ Écart constaté : ${formatPriceXPF(item.priceSpreadXpf)}${item.priceSpreadNote ? ` · ${escapeHtmlUi(item.priceSpreadNote)}` : ''}
                   </span>
                 ` : `
                   <span class="px-2.5 py-1 rounded-full text-[11px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-400/40">
@@ -4283,6 +4299,12 @@
                   </span>
                 `}
               </div>
+              ${(item.enrichedFromPortals && item.enrichedFromPortals.length > 0) ? `
+                <div class="px-3 py-2 rounded-xl bg-teal-950/50 border border-teal-500/40 text-xs text-teal-200 flex items-center justify-between gap-2 flex-wrap">
+                  <span>✨ <strong>Complétion multi-sources active</strong> — champs enrichis depuis <strong>${escapeHtmlUi(item.enrichedFromPortals.join(', '))}</strong></span>
+                  <span class="font-mono text-[10.5px] text-teal-300">${escapeHtmlUi((item.enrichedFields || []).join(' • '))}</span>
+                </div>
+              ` : ''}
               <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 ${item.multiPortals.map((mp, idx) => `
                   <a href="${escapeHtmlUi(mp.url || '#')}" target="_blank" rel="noopener noreferrer" class="p-3 rounded-xl bg-slate-900/90 border ${idx === 0 && item.priceSpreadXpf > 0 ? 'border-emerald-500/50' : 'border-slate-800'} hover:border-sky-500/50 flex items-center justify-between gap-2 transition-all">
@@ -7102,6 +7124,205 @@
     }
 
     // =========================================================================
+    // TABLEAU DE BORD SANTÉ & QUALITÉ DES DONNÉES (QUALITY GATE + CANARY)
+    // =========================================================================
+    let cachedQualityReport = null;
+
+    async function loadQualityDashboard(forceReload = false) {
+      if (cachedQualityReport && !forceReload) return cachedQualityReport;
+      try {
+        let res = await fetch('/api/quality').catch(() => null);
+        if (!res || !res.ok) {
+          res = await fetch('./data_quality.json').catch(() => null);
+        }
+        if (res && res.ok) {
+          const json = await res.json();
+          cachedQualityReport = json.data || json;
+          updateQualityTopBadge(cachedQualityReport);
+          return cachedQualityReport;
+        }
+      } catch (e) {
+        console.warn('Quality report unavailable:', e);
+      }
+      return null;
+    }
+
+    function updateQualityTopBadge(rep) {
+      const pill = document.getElementById('qualityTopPill');
+      const btn = document.getElementById('btnQualityGateTop');
+      if (!pill || !rep || !rep.summary) return;
+      const st = rep.gateStatus || 'PASS';
+      const avg = rep.summary.avgScore || 0;
+      pill.textContent = `${st} · ${avg}`;
+      if (btn) {
+        btn.className = st === 'PASS'
+          ? 'px-3.5 py-2 rounded-xl bg-emerald-950/60 hover:bg-emerald-900/70 border border-emerald-500/40 text-emerald-200 text-xs font-semibold flex items-center gap-1.5 transition-all'
+          : (st === 'WARN'
+            ? 'px-3.5 py-2 rounded-xl bg-amber-950/60 hover:bg-amber-900/70 border border-amber-500/40 text-amber-200 text-xs font-semibold flex items-center gap-1.5 transition-all'
+            : 'px-3.5 py-2 rounded-xl bg-rose-950/60 hover:bg-rose-900/70 border border-rose-500/40 text-rose-200 text-xs font-semibold flex items-center gap-1.5 transition-all');
+      }
+    }
+
+    function ensureQualityModalDom() {
+      if (document.getElementById('qualityGateModal')) return;
+      const div = document.createElement('div');
+      div.id = 'qualityGateModal';
+      div.className = 'hidden fixed inset-0 z-[1200] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto';
+      div.innerHTML = `
+        <div class="w-full max-w-5xl rounded-2xl bg-slate-900 border border-slate-700/80 shadow-2xl overflow-hidden my-auto">
+          <div class="px-6 py-4 bg-slate-950/90 border-b border-slate-800 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 class="text-base font-extrabold text-white flex items-center gap-2">🛡️ Santé &amp; Qualité des Données (Quality Gate Production)</h2>
+              <p class="text-xs text-slate-400">Contrôle vérité terrain, complétude par portail, fusion multi-sources et quarantaine P0</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button type="button" id="btnRunCanaryLive" onclick="triggerLiveCanaryCheck()" class="px-3 py-1.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-bold transition-all cursor-pointer">
+                🔎 Lancer Vérification Live (20 fiches)
+              </button>
+              <button type="button" onclick="closeQualityModal()" class="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold cursor-pointer">✕ Fermer</button>
+            </div>
+          </div>
+          <div id="qualityModalBody" class="p-6 max-h-[78vh] overflow-y-auto space-y-5 text-xs text-slate-200">
+            <div class="text-center py-8 text-slate-400">Chargement du rapport Quality Gate...</div>
+          </div>
+        </div>
+      `;
+      div.addEventListener('click', (ev) => { if (ev.target === div) closeQualityModal(); });
+      document.body.appendChild(div);
+    }
+
+    async function openQualityModal() {
+      ensureQualityModalDom();
+      const modal = document.getElementById('qualityGateModal');
+      modal.classList.remove('hidden');
+      const rep = await loadQualityDashboard(true);
+      renderQualityModalContent(rep);
+    }
+
+    function closeQualityModal() {
+      const modal = document.getElementById('qualityGateModal');
+      if (modal) modal.classList.add('hidden');
+    }
+
+    async function triggerLiveCanaryCheck() {
+      const btn = document.getElementById('btnRunCanaryLive');
+      if (btn) { btn.disabled = true; btn.textContent = '⏳ Vérification en direct...'; }
+      try {
+        const res = await fetch('/api/quality/canary', { method: 'POST' });
+        if (res.ok) {
+          const rep = await loadQualityDashboard(true);
+          renderQualityModalContent(rep);
+          showNotificationToast('🛡️ Contrôle Live Terminé', 'Les 20 fiches canaris ont été vérifiées en direct contre les sites sources.', 'success', 3500);
+        } else {
+          showNotificationToast('Mode Statique', 'Le contrôle live nécessite le serveur local Python (server.py).', 'info', 3000);
+        }
+      } catch (e) {
+        showNotificationToast('Mode Statique', 'Le contrôle live nécessite le serveur local Python.', 'info', 3000);
+      } finally {
+        if (btn) { btn.disabled = false; btn.textContent = '🔎 Lancer Vérification Live (20 fiches)'; }
+      }
+    }
+
+    function renderQualityModalContent(rep) {
+      const body = document.getElementById('qualityModalBody');
+      if (!body) return;
+      if (!rep || !rep.summary) {
+        body.innerHTML = '<div class="p-6 rounded-xl bg-slate-800/60 text-slate-300">Rapport qualité indisponible.</div>';
+        return;
+      }
+      const s = rep.summary;
+      const st = rep.gateStatus || 'PASS';
+      const stCls = st === 'PASS' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' : (st === 'WARN' ? 'bg-amber-500/20 text-amber-300 border-amber-500/40' : 'bg-rose-500/20 text-rose-300 border-rose-500/40');
+      const canary = rep.canary;
+
+      body.innerHTML = `
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Statut Quality Gate</div>
+            <div class="mt-1"><span class="px-2 py-0.5 rounded-lg border font-extrabold text-sm ${stCls}">${escapeHtmlUi(st)}</span></div>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Score Moyen</div>
+            <div class="text-xl font-black text-emerald-400 mt-0.5">${s.avgScore}/100</div>
+            <div class="text-[10px] text-slate-400">Grade A : ${s.gradeAPct}%</div>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Annonces Publiées</div>
+            <div class="text-xl font-black text-white mt-0.5">${(s.publishedCount || 0).toLocaleString('fr-FR')}</div>
+            <div class="text-[10px] text-amber-300">${s.quarantinedCount || 0} en quarantaine P0</div>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Fusion Multi-Sources</div>
+            <div class="text-xl font-black text-teal-400 mt-0.5">${s.fusionEnrichedCount || 0}</div>
+            <div class="text-[10px] text-slate-400">${s.totalFusedFields || 0} champs complétés</div>
+          </div>
+          <div class="p-3.5 rounded-xl bg-slate-950/70 border border-slate-800">
+            <div class="text-[10px] uppercase text-slate-400">Fraîcheur Live Canari</div>
+            <div class="text-xl font-black text-sky-400 mt-0.5">${canary ? (canary.freshnessPct + '%') : 'N/A'}</div>
+            <div class="text-[10px] text-slate-400">${canary ? ('Prix exact : ' + canary.priceExactMatchPct + '%') : 'Non exécuté'}</div>
+          </div>
+        </div>
+
+        <div class="rounded-xl border border-slate-800 overflow-hidden">
+          <div class="px-4 py-2.5 bg-slate-950/80 font-bold text-slate-200 border-b border-slate-800">Matrice Santé &amp; Complétude par Portail</div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left border-collapse">
+              <thead>
+                <tr class="bg-slate-900/80 text-[10.5px] uppercase text-slate-400 border-b border-slate-800">
+                  <th class="px-3 py-2">Portail</th>
+                  <th class="px-3 py-2 text-right">Publiées</th>
+                  <th class="px-3 py-2 text-right">Quarantaine</th>
+                  <th class="px-3 py-2 text-right">Score</th>
+                  <th class="px-3 py-2 text-right">Grade A</th>
+                  <th class="px-3 py-2 text-right">Surfaces</th>
+                  <th class="px-3 py-2 text-right">Téléphones</th>
+                  <th class="px-3 py-2 text-right">Photos réelles</th>
+                  <th class="px-3 py-2 text-right">Enrichies</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${(rep.portalHealth || []).map(p => `
+                  <tr class="border-b border-slate-800/60 hover:bg-slate-800/30">
+                    <td class="px-3 py-2 font-bold text-white">${escapeHtmlUi(p.source)}</td>
+                    <td class="px-3 py-2 text-right font-mono">${p.published}</td>
+                    <td class="px-3 py-2 text-right font-mono ${p.quarantined > 0 ? 'text-amber-300' : 'text-slate-400'}">${p.quarantined}</td>
+                    <td class="px-3 py-2 text-right font-mono font-bold text-emerald-400">${p.avgScore}</td>
+                    <td class="px-3 py-2 text-right font-mono">${p.gradeAPct}%</td>
+                    <td class="px-3 py-2 text-right font-mono">${p.surfaceCompletenessPct}%</td>
+                    <td class="px-3 py-2 text-right font-mono">${p.phoneCompletenessPct}%</td>
+                    <td class="px-3 py-2 text-right font-mono">${p.realPhotoPct}%</td>
+                    <td class="px-3 py-2 text-right font-mono text-teal-300">+${p.fusionEnrichedCount}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        ${(rep.quarantinedSamples && rep.quarantinedSamples.length > 0) ? `
+          <div class="rounded-xl border border-amber-500/30 bg-amber-950/15 overflow-hidden">
+            <div class="px-4 py-2.5 bg-amber-950/40 font-bold text-amber-200 border-b border-amber-500/30">
+              🚫 Annonces isolées en Quarantaine P0 (masquées du flux public &amp; de l'AVM — ${s.quarantinedCount} au total)
+            </div>
+            <div class="p-3 space-y-1.5 max-h-52 overflow-y-auto">
+              ${rep.quarantinedSamples.slice(0, 25).map(q => `
+                <div class="flex items-center justify-between gap-2 p-2 rounded-lg bg-slate-950/60 border border-slate-800/80">
+                  <div class="min-w-0">
+                    <a href="${escapeHtmlUi(q.sourceUrl || '#')}" target="_blank" rel="noopener noreferrer" class="font-bold text-slate-200 hover:text-sky-400 truncate block">${escapeHtmlUi(q.title || q.id)}</a>
+                    <span class="text-[10.5px] text-slate-400">${escapeHtmlUi(q.source)} · ${escapeHtmlUi(q.id)} · ${formatPriceXPF(q.currentPrice || 0)}</span>
+                  </div>
+                  <div class="flex flex-wrap gap-1 justify-end shrink-0">
+                    ${(q.quarantineReasons || []).map(r => `<span class="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-mono">${escapeHtmlUi(r)}</span>`).join('')}
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : `<div class="p-4 rounded-xl bg-emerald-950/30 border border-emerald-500/30 text-emerald-300 font-semibold">✅ Aucune annonce en quarantaine P0 — 100 % du catalogue respecte les seuils de production.</div>`}
+      `;
+    }
+
+    // =========================================================================
     // INITIALISATION AU CHARGEMENT
     // =========================================================================
     window.addEventListener('DOMContentLoaded', () => {
@@ -7113,6 +7334,7 @@
       recalculateAVM();
       recalculateSimulation();
       loadLiveBackendData();
+      loadQualityDashboard();
       checkAiStatusInBackground();
     });
   </script>

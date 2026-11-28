@@ -18,12 +18,15 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from src.storage.database import PropertyDatabase
-from src.ingestion.live_scraper import LiveNCScraper
+from src.ingestion.live_scraper import LiveNCScraper, _dedup_immonc_photos
 from src.utils.logger import get_logger, DEFAULT_LOG_FILE
 from src.utils.log_analyzer import PipelineAuditor
 from src.domain.agencies_directory import NC_AGENCIES
 from src.analysis.cadastre_enrichment import enrich_listings
 from src.analysis.deduplicator import detect_and_annotate_duplicates
+from src.quality.quality_gate import run_quality_gate
+from src.quality.canary_verifier import run_canary_verification, load_latest_canary_report
+from src.processing.cleaner import normalize_etage
 from src.reference.geo import get_geo_referential, normalize_text
 from src.utils.text_cleaner import fix_mojibake, normalize_agency_name
 from src.processing.description_structurer import structure_description
@@ -50,19 +53,22 @@ _BUILD_LISTINGS_LOCK = threading.Lock()
 PARCEL_POLYGON_CACHE: Dict[str, Any] = {}
 _CACHED_LISTINGS_PAYLOAD: Optional[bytes] = None
 _CACHED_LISTINGS_GZIP: Optional[bytes] = None
+_CACHED_QUALITY_REPORT: Optional[Dict[str, Any]] = None
 
 
 def invalidate_listings_cache():
-    global _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP
+    global _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP, _CACHED_QUALITY_REPORT
     with _CACHE_LOCK:
         _CACHED_LISTINGS_PAYLOAD = None
         _CACHED_LISTINGS_GZIP = None
+        _CACHED_QUALITY_REPORT = None
 
 ALLOWED_STATIC_PATHS = {
     "/index.html",
     "/data_listings.json",
     "/data_sources.json",
     "/data_agencies.json",
+    "/data_quality.json",
     "/favicon.ico",
 }
 
@@ -368,6 +374,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             return self.handle_get_audit()
         elif path == "/api/audit/completeness":
             return self.handle_get_completeness_audit()
+        elif path == "/api/quality":
+            return self.handle_get_quality()
         elif path == "/api/logs":
             return self.handle_get_logs()
 
@@ -398,6 +406,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             return self.handle_post_ai_batch_start()
         elif path == "/api/ai/batch/cancel":
             return self.handle_post_ai_batch_cancel()
+        elif path == "/api/quality/canary":
+            return self.handle_post_quality_canary()
 
         self._send_json({"error": "Endpoint not found"}, status_code=404)
 
@@ -790,18 +800,20 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     else:
                         img_url = "https://images.unsplash.com/photo-1580587771525-78b9dba3b914?auto=format&fit=crop&w=800&q=80"
 
-                # Extraction multi-photos depuis images_json
+                # Extraction multi-photos depuis images_json (avec déduplication stricte ImmoNC)
                 raw_images_json = row.get("images_json")
                 images = []
                 if pd.notna(raw_images_json) and raw_images_json:
                     try:
                         parsed_imgs = json.loads(str(raw_images_json))
                         if isinstance(parsed_imgs, list):
-                            images = [str(u).strip() for u in parsed_imgs if str(u).strip().startswith("http")]
+                            images = _dedup_immonc_photos([str(u).strip() for u in parsed_imgs if str(u).strip().startswith("http")])
                     except Exception:
                         images = []
                 if not images and img_url:
                     images = [img_url]
+                elif images and not is_default_image:
+                    img_url = images[0]
 
                 # 2. Type d'opération (Vente vs Location) & Détection Colocation
                 title_raw_str = str(row.get("title") or "").strip()
@@ -1169,7 +1181,8 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
                     charges_m = None
                 if not charges_m and merged_tech_specs.get("charges_mensuelles_xpf"):
                     charges_m = safe_int(merged_tech_specs.get("charges_mensuelles_xpf"), None)
-                etage_val = safe_str(row.get("etage")) or merged_tech_specs.get("etage") or None
+                etage_raw_val = safe_str(row.get("etage")) or merged_tech_specs.get("etage") or None
+                etage_val = normalize_etage(etage_raw_val) or etage_raw_val
                 has_elev = safe_bool(row.get("has_elevator")) or (merged_tech_specs.get("has_elevator") is True)
                 parking_det = safe_str(row.get("parking_detail")) or merged_tech_specs.get("parking_detail") or None
                 standing_val = merged_tech_specs.get("standing") or None
@@ -1397,16 +1410,66 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
             except Exception as e:
                 logger.warning(f"Impossible d'enrichir les annonces avec le cadastre : {e}")
 
-            # Dédoublonnage multi-portails & détection des écarts de prix entre agences
+            # Dédoublonnage & fusion multi-sources enrichissante v2
             try:
                 listings = detect_and_annotate_duplicates(listings)
             except Exception as e:
                 logger.warning(f"Impossible d'exécuter le dédoublonnage multi-portails : {e}")
 
+            # Garde-Fou Qualité Production (Quality Gate : scoring A/B/C/D + quarantaine P0)
+            global _CACHED_QUALITY_REPORT
+            try:
+                canary_rep = load_latest_canary_report()
+                public_listings, _quarantined, q_report = run_quality_gate(
+                    listings,
+                    prev_snapshot_path=BASE_DIR / "data_listings.json",
+                    canary_report=canary_rep,
+                )
+                listings = public_listings
+                with _CACHE_LOCK:
+                    _CACHED_QUALITY_REPORT = q_report
+            except Exception as e:
+                logger.warning(f"Impossible d'exécuter le Quality Gate : {e}")
+
             clean_payload = {"success": True, "count": len(listings), "data": listings}
             payload_bytes = json.dumps(sanitize_for_json(clean_payload), default=str, ensure_ascii=False, allow_nan=False).encode("utf-8")
             gz_bytes = gzip.compress(payload_bytes, compresslevel=5)
             return payload_bytes, gz_bytes
+
+    def handle_get_quality(self):
+        """Renvoie le rapport complet du Quality Gate (scores A/B/C/D, santé par portail, fusion, quarantaine, canari)."""
+        global _CACHED_QUALITY_REPORT, _CACHED_LISTINGS_PAYLOAD, _CACHED_LISTINGS_GZIP
+        with _CACHE_LOCK:
+            rep = _CACHED_QUALITY_REPORT
+        if rep is None:
+            with _BUILD_LISTINGS_LOCK:
+                with _CACHE_LOCK:
+                    rep = _CACHED_QUALITY_REPORT
+                if rep is None:
+                    payload_bytes, gz_bytes = self.build_listings_payload_bytes()
+                    with _CACHE_LOCK:
+                        _CACHED_LISTINGS_PAYLOAD = payload_bytes
+                        _CACHED_LISTINGS_GZIP = gz_bytes
+                        rep = _CACHED_QUALITY_REPORT
+        self._send_json({"success": True, "data": sanitize_for_json(rep or {})})
+
+    def handle_post_quality_canary(self):
+        """Déclenche un contrôle canari live (20 annonces / 4 portails) contre les sites sources."""
+        global _CACHED_LISTINGS_PAYLOAD, _CACHED_QUALITY_REPORT
+        try:
+            with _CACHE_LOCK:
+                raw_bytes = _CACHED_LISTINGS_PAYLOAD
+            if not raw_bytes:
+                raw_bytes, _ = self.build_listings_payload_bytes()
+            items = (json.loads(raw_bytes.decode("utf-8")) or {}).get("data") or []
+            canary_res = run_canary_verification(items, per_portal=5)
+            with _CACHE_LOCK:
+                if isinstance(_CACHED_QUALITY_REPORT, dict):
+                    _CACHED_QUALITY_REPORT["canary"] = canary_res
+            self._send_json({"success": True, "data": sanitize_for_json(canary_res)})
+        except Exception as e:
+            logger.error(f"Erreur Canary Verifier : {e}")
+            self._send_json({"success": False, "error": str(e)}, status_code=500)
 
     def handle_get_parcel_polygon(self):
         """

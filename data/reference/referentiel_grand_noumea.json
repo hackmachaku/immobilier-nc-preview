@@ -234,8 +234,8 @@
           "secteur": "Presqu'île Nord Ouest",
           "standing": "Accessible",
           "description": "Quartier résidentiel littoral de la presqu'île de Ducos",
-          "latitude": -22.245,
-          "longitude": 166.418
+          "latitude": -22.2312,
+          "longitude": 166.4349
         },
         {
           "nom": "Tindu",
@@ -337,8 +337,8 @@
           "secteur": "Dumbéa Centre",
           "standing": "Intermédiaire",
           "description": "Nouveau pôle urbain (Médipôle CHT, lycée Dick Ukeiwë, lotissements récents)",
-          "latitude": -22.185,
-          "longitude": 166.445
+          "latitude": -22.1988,
+          "longitude": 166.4467
         },
         {
           "nom": "Auteuil",
@@ -353,24 +353,24 @@
           "secteur": "Dumbéa Nord",
           "standing": "Pavillonnaire",
           "description": "Lotissements résidentiels calmes en vallée",
-          "latitude": -22.148,
-          "longitude": 166.495
+          "latitude": -22.1354,
+          "longitude": 166.4315
         },
         {
           "nom": "Nondoué",
           "secteur": "Dumbéa Nord / Rivière",
           "standing": "Rural / Pavillonnaire",
           "description": "Cadre verdoyant le long de la rivière de Dumbéa",
-          "latitude": -22.142,
-          "longitude": 166.469
+          "latitude": -22.1322,
+          "longitude": 166.4385
         },
         {
           "nom": "Nakutakoin",
           "secteur": "Dumbéa Ouest",
           "standing": "Pavillonnaire",
           "description": "Secteur intermédiaire le long de la RT1",
-          "latitude": -22.172,
-          "longitude": 166.452
+          "latitude": -22.1741,
+          "longitude": 166.4142
         },
         {
           "nom": "Val Fleuri",
@@ -607,8 +607,8 @@
           "secteur": "Païta Côtier",
           "standing": "Pavillonnaire / Littoral",
           "description": "Secteur littoral Karikaté",
-          "latitude": -22.155,
-          "longitude": 166.336
+          "latitude": -22.1078,
+          "longitude": 166.1931
         },
         {
           "nom": "Nétéa",
@@ -663,8 +663,8 @@
           "secteur": "Païta Nord",
           "standing": "Rural / Littoral",
           "description": "Secteur Tamoa",
-          "latitude": -22.078,
-          "longitude": 166.258
+          "latitude": -22.0638,
+          "longitude": 166.2827
         },
         {
           "nom": "Nogouta",

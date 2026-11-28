@@ -1,0 +1,248 @@
+{
+  "checkedAt": "2026-11-28T01:29:50.206003+00:00",
+  "totalChecked": 20,
+  "onlineCount": 20,
+  "freshnessPct": 100.0,
+  "priceExactMatchPct": 100.0,
+  "selectorDriftPortals": [],
+  "byPortal": {
+    "immobilier.nc": {
+      "checked": 5,
+      "online": 5,
+      "expired404": 0,
+      "freshnessPct": 100.0,
+      "priceMatchPct": 100.0,
+      "descFidelityPct": 100.0,
+      "selectorDrift": false
+    },
+    "bienmeloger.nc": {
+      "checked": 5,
+      "online": 5,
+      "expired404": 0,
+      "freshnessPct": 100.0,
+      "priceMatchPct": 100.0,
+      "descFidelityPct": 100.0,
+      "selectorDrift": false
+    },
+    "immonc": {
+      "checked": 5,
+      "online": 5,
+      "expired404": 0,
+      "freshnessPct": 100.0,
+      "priceMatchPct": 100.0,
+      "descFidelityPct": 80.0,
+      "selectorDrift": false
+    },
+    "yatoo.nc": {
+      "checked": 5,
+      "online": 5,
+      "expired404": 0,
+      "freshnessPct": 100.0,
+      "priceMatchPct": 100.0,
+      "descFidelityPct": 100.0,
+      "selectorDrift": false
+    }
+  },
+  "samples": [
+    {
+      "id": "immobilier.nc_517463",
+      "source": "immobilier.nc",
+      "url": "https://www.immobilier.nc/details/517463",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.92,
+      "livePrice": 5900000,
+      "status": "OK"
+    },
+    {
+      "id": "immobilier.nc_513744",
+      "source": "immobilier.nc",
+      "url": "https://www.immobilier.nc/details/513744",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.98,
+      "livePrice": 45000000,
+      "status": "OK"
+    },
+    {
+      "id": "immobilier.nc_511409",
+      "source": "immobilier.nc",
+      "url": "https://www.immobilier.nc/details/511409",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 1.0,
+      "livePrice": 23000000,
+      "status": "OK"
+    },
+    {
+      "id": "immobilier.nc_446416",
+      "source": "immobilier.nc",
+      "url": "https://www.immobilier.nc/details/446416",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 21000000,
+      "status": "OK"
+    },
+    {
+      "id": "immobilier.nc_328946",
+      "source": "immobilier.nc",
+      "url": "https://www.immobilier.nc/details/328946",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 48000000,
+      "status": "OK"
+    },
+    {
+      "id": "bienmeloger.nc_518065",
+      "source": "bienmeloger.nc",
+      "url": "https://www.immobilier.nc/details/518065",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 85000000,
+      "status": "OK"
+    },
+    {
+      "id": "bienmeloger.nc_492882",
+      "source": "bienmeloger.nc",
+      "url": "https://www.immobilier.nc/details/492882",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 27000000,
+      "status": "OK"
+    },
+    {
+      "id": "bienmeloger.nc_509699",
+      "source": "bienmeloger.nc",
+      "url": "https://www.immobilier.nc/details/509699",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.98,
+      "livePrice": 7500000,
+      "status": "OK"
+    },
+    {
+      "id": "bienmeloger.nc_507564",
+      "source": "bienmeloger.nc",
+      "url": "https://www.immobilier.nc/details/507564",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 9500000,
+      "status": "OK"
+    },
+    {
+      "id": "bienmeloger.nc_503955",
+      "source": "bienmeloger.nc",
+      "url": "https://www.immobilier.nc/details/503955",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 119900000,
+      "status": "OK"
+    },
+    {
+      "id": "immonc_5318439",
+      "source": "immonc",
+      "url": "https://www.immonc.com/annonce/location/colocation/mont-dore-robinson-5318439",
+      "online": true,
+      "priceMatch": null,
+      "descRatio": 1.0,
+      "livePrice": null,
+      "status": "OK"
+    },
+    {
+      "id": "immonc_5327642",
+      "source": "immonc",
+      "url": "https://www.immonc.com/annonce/vente/maison/mont-dore-la-coulee-5327642",
+      "online": true,
+      "priceMatch": null,
+      "descRatio": 1.0,
+      "livePrice": null,
+      "status": "OK"
+    },
+    {
+      "id": "immonc_5297575",
+      "source": "immonc",
+      "url": "https://www.immonc.com/annonce/vente/societe-et-fonds-de-commerce/n-a-5297575",
+      "online": true,
+      "priceMatch": null,
+      "descRatio": 0.99,
+      "livePrice": null,
+      "status": "OK"
+    },
+    {
+      "id": "immonc_5324526",
+      "source": "immonc",
+      "url": "https://www.immonc.com/annonce/location/appartement-f3/noumea-5324526",
+      "online": true,
+      "priceMatch": null,
+      "descRatio": 0.37,
+      "livePrice": null,
+      "status": "OK"
+    },
+    {
+      "id": "immonc_5332053",
+      "source": "immonc",
+      "url": "https://www.immonc.com/annonce/location/dock/noumea-centre-ville-5332053",
+      "online": true,
+      "priceMatch": null,
+      "descRatio": 1.0,
+      "livePrice": null,
+      "status": "OK"
+    },
+    {
+      "id": "yatoo.nc_--i-bml-416126e0-d177-40ae-ae42-c7431ea6df0a",
+      "source": "yatoo.nc",
+      "url": "https://yatoo.nc/annonces/locations/416126e0",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 0.99,
+      "livePrice": 60000,
+      "status": "OK"
+    },
+    {
+      "id": "yatoo.nc_98592ff2-119f-4e3c-b2af-4a2026e32504",
+      "source": "yatoo.nc",
+      "url": "https://yatoo.nc/annonces/ventes-immobilieres/98592ff2",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 1.0,
+      "livePrice": 35000000,
+      "status": "OK"
+    },
+    {
+      "id": "yatoo.nc_--i-bml-d8dee213-327a-45bb-bcf1-bf2c99dd0453",
+      "source": "yatoo.nc",
+      "url": "https://yatoo.nc/annonces/locations/d8dee213",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 1.0,
+      "livePrice": 66000,
+      "status": "OK"
+    },
+    {
+      "id": "yatoo.nc_--i-bml-18f71fd3-a424-4916-8b72-b12cbcc8b2ec",
+      "source": "yatoo.nc",
+      "url": "https://yatoo.nc/annonces/ventes-immobilieres/18f71fd3",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 1.0,
+      "livePrice": 5000000,
+      "status": "OK"
+    },
+    {
+      "id": "yatoo.nc_--i-bml-71c8e20c-fdaa-4bb7-b459-70da7a322cf7",
+      "source": "yatoo.nc",
+      "url": "https://yatoo.nc/annonces/locations/71c8e20c",
+      "online": true,
+      "priceMatch": true,
+      "descRatio": 1.0,
+      "livePrice": 160000,
+      "status": "OK"
+    }
+  ]
+}

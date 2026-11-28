@@ -22,6 +22,68 @@ from src.ingestion.detail_parser import parse_immonc_detail_html
 
 logger = get_logger("live_scraper")
 
+_CP1252_TRANS = str.maketrans({
+    "\x80": "€", "\x85": "...", "\x91": "'", "\x92": "'",
+    "\x93": '"', "\x94": '"', "\x95": "•", "\x96": "–", "\x97": "—",
+})
+
+
+def _clean_html_and_cp1252(text: Optional[str]) -> str:
+    """Nettoie les balises HTML (<br />, <strong>, <u>) et octets Windows-1252 (\x80-\x9f) dès l'ingestion."""
+    if not text:
+        return ""
+    s = str(text).translate(_CP1252_TRANS)
+    s = re.sub(r"[\x80-\x9f]", " ", s)
+    s = html_lib.unescape(s)
+    s = re.sub(r"<\s*br\s*/?\s*>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</\s*(?:p|div|li|h[1-6]|tr)\s*>", "\n", s, flags=re.IGNORECASE)
+    s = re.sub(r"</?[a-zA-Z][^>]*>", "", s)
+    s = re.sub(r"[ \t]+\n", "\n", s)
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    return s.strip()
+
+
+def _normalize_phone_nc_simple(raw_phone: Any) -> Optional[str]:
+    """Formate un numéro de téléphone NC (+687 XX.XX.XX) si 6 chiffres valides sont détectés."""
+    if not raw_phone:
+        return None
+    digits = re.sub(r"\D", "", str(raw_phone))
+    if digits.startswith("00687"):
+        digits = digits[5:]
+    elif digits.startswith("687") and len(digits) == 9:
+        digits = digits[3:]
+    elif digits.startswith("0") and len(digits) == 7:
+        digits = digits[1:]
+    if len(digits) == 6 and digits[0] in "23456789":
+        return f"+687 {digits[:2]}.{digits[2:4]}.{digits[4:]}"
+    return None
+
+
+def _canonicalize_immonc_photo(url: str) -> str:
+    """Normalise une URL photo ImmoNC vers https://www.immonc.com/photos/photos_big/<filename>."""
+    if not url:
+        return ""
+    u = str(url).strip()
+    u = re.sub(r"/photos_(?:medium|small|vignette|thumb)/", "/photos_big/", u)
+    u = re.sub(r"^https?://(?:www\.)?immonc\.com/", "https://www.immonc.com/", u, flags=re.IGNORECASE)
+    return u
+
+
+def _dedup_immonc_photos(urls: List[str]) -> List[str]:
+    """Déduplique les URLs photos ImmoNC par nom de fichier (élimine les doublons www/no-www/vignette)."""
+    out: List[str] = []
+    seen_keys = set()
+    for raw_u in urls:
+        if not raw_u or not str(raw_u).strip().startswith("http"):
+            continue
+        canon = _canonicalize_immonc_photo(str(raw_u))
+        fname = canon.split("?")[0].rstrip("/").rsplit("/", 1)[-1].lower()
+        key = fname if ("immonc.com" in canon.lower() and fname) else canon.lower()
+        if key not in seen_keys:
+            seen_keys.add(key)
+            out.append(canon)
+    return out
+
 
 def parse_datetime_safe(val: Any) -> Optional[datetime]:
     """Convertit une chaîne de date (ISO ou format SQL) en objet datetime UTC cohérent."""
@@ -121,10 +183,10 @@ class LiveNCScraper:
             # 2. Détection du type de transaction (Vente vs Location)
             # Priorité stricte à deal_type_api quand il est fourni par l'API (évite que "loyer/bail" dans un bien de rendement en vente bascule en Location)
             deal_type_api = str(item.get("deal_type") or "").strip().lower()
-            desc = item.get("description") or ""
+            desc = _clean_html_and_cp1252(item.get("description") or "")
             blob = f"{desc} {item.get('title') or ''}".lower()
             blob_no_invest = re.sub(
-                r"\b(id[ée]al\s*(?:pour\s*)?investiss\w*|rentabilit[ée]\s*locative|rapport\s*locatif|actuellement\s*lou[ée]|vendu\s*lou[ée]|loyer\s*(?:actuel|mensuel\s*per[çc]u)|bail\s*en\s*cours)\b",
+                r"\b(id[ée]al\s*(?:pour\s*)?investiss\w*|rentabilit[ée]\s*locative|rapport\s*locatif|actuellement\s*lou[ée]e?s?|vendu[es]?\s*lou[ée]e?s?|lou[ée]e?\s+\d|loyer\s*(?:actuel|mensuel\s*per[çc]u|annuel)|bail\s*en\s*cours|revenus?\s*locatifs?)\b",
                 " ",
                 blob,
             )
@@ -158,29 +220,79 @@ class LiveNCScraper:
                             price_int = int(p_val)
                         price_str = f"{price_int} F CFP/mois"
                     else:
-                        # Pour une vente (l'API renvoie parfois des milliers, ex: 39500 -> 39 500 000 F)
+                        # Pour une vente (l'API renvoie parfois des milliers, ex: 39500 -> 39 500 000 F ou 39.9 -> 39 900 000 F)
                         if p_val < 1000:
-                            price_int = int(p_val * 1_000_000)
+                            price_int = int(round(p_val * 1_000_000))
                         elif p_val >= 1_000_000:
-                            price_int = int(p_val)
+                            price_int = int(round(p_val))
                         elif deal_type_api == "vente" or has_vente_words:
-                            # Vente confirmée exprimée en milliers de XPF (ex: 39500 => 39.5M F)
-                            price_int = int(p_val * 1_000)
+                            price_int = int(round(p_val * 1_000))
                         elif has_loc_words:
                             is_location = True
                             transaction_type_declared = "Location"
-                            price_int = int(p_val)
+                            price_int = int(round(p_val))
                             price_str = f"{price_int} F CFP/mois"
                         else:
-                            price_int = int(p_val * 1_000)
+                            price_int = int(round(p_val * 1_000))
                         if not price_str:
                             price_str = f"{price_int} F CFP"
                 except (ValueError, TypeError):
                     price_str = str(raw_p)
 
-            # 4. Surface habitable
+            # 4. Surface habitable (gère les surfaces composées ex: "81 + 48 " -> 129 m²)
             h_size = item.get("home_size")
-            surface_str = f"{h_size} m²" if h_size is not None else None
+            surface_str = None
+            if h_size is not None and str(h_size).strip():
+                hs_clean = str(h_size).strip()
+                if "+" in hs_clean:
+                    parts_h = re.findall(r"\d+(?:[.,]\d+)?", hs_clean)
+                    if parts_h:
+                        total_h = sum(float(x.replace(",", ".")) for x in parts_h)
+                        if total_h > 0:
+                            surface_str = f"{total_h:g} m²"
+                else:
+                    surface_str = f"{hs_clean} m²"
+
+            # 4b. Champs natifs structurés de l'API (terrain, charges, SDB, parkings, dépôt)
+            api_comp_details: Dict[str, List[str]] = {}
+            full_area = item.get("full_area_size")
+            full_unit = str(item.get("full_area_unit") or "m2").strip().lower()
+            if full_area is not None and str(full_area).strip() not in ("", "0", "0.0"):
+                fa_str = str(full_area).strip()
+                if "ha" in full_unit or "hect" in full_unit:
+                    api_comp_details.setdefault("Terrain", []).append(f"Sur terrain {fa_str} ha")
+                elif "are" in full_unit:
+                    api_comp_details.setdefault("Terrain", []).append(f"Sur terrain {fa_str} ares")
+                else:
+                    api_comp_details.setdefault("Terrain", []).append(f"Sur terrain {fa_str} m2")
+
+            nb_bath = item.get("nb_of_bathroom")
+            if nb_bath is not None:
+                try:
+                    nb_b = int(nb_bath)
+                    if 1 <= nb_b <= 15:
+                        api_comp_details.setdefault("Salle de bain", []).append(f"Salle d'eau {nb_b}")
+                except (ValueError, TypeError):
+                    pass
+
+            nb_park = item.get("nb_of_parking")
+            if nb_park is not None:
+                try:
+                    nb_p = int(nb_park)
+                    if 1 <= nb_p <= 20:
+                        api_comp_details.setdefault("Garage", []).append(f"Parking {nb_p}")
+                except (ValueError, TypeError):
+                    pass
+
+            raw_charges_api: Optional[str] = None
+            renting_fees = item.get("renting_fees")
+            if renting_fees is not None and str(renting_fees).strip() not in ("", "0", "0.0"):
+                raw_charges_api = str(renting_fees).strip()
+                api_comp_details.setdefault("Informations financières", []).append(f"Charges mensuelles {raw_charges_api}")
+
+            deposit = item.get("deposit")
+            if deposit is not None and str(deposit).strip() not in ("", "0", "0.0"):
+                api_comp_details.setdefault("Informations financières", []).append(f"Dépôt de garantie {str(deposit).strip()}")
 
             # 5. Détection du type de bien et titre
             prop_cat = str(item.get("property_category") or "").upper()
@@ -192,12 +304,12 @@ class LiveNCScraper:
             if quartier_name:
                 title += f" ({quartier_name.capitalize()})"
 
-            # 6. Agence ou propriétaire avec résolution dans le référentiel des 52 agences NC
+            # 6. Agence ou propriétaire avec résolution dans le référentiel des 52 agences NC + téléphone owner.phone
             owner = item.get("owner") or {}
-            raw_owner_name = owner.get("full_name") or ""
-            raw_mail = owner.get("mail") or ""
-            
-            # Liens externes partenaires (ex: soleil.nc)
+            raw_owner_name = (owner.get("full_name") or "").strip()
+            raw_mail = (owner.get("mail") or "").strip()
+            owner_phone = _normalize_phone_nc_simple(owner.get("phone"))
+
             link_blob = ""
             for lk in (item.get("links") or []):
                 if isinstance(lk, dict):
@@ -226,9 +338,6 @@ class LiveNCScraper:
             images_json = json.dumps(photo_urls) if photo_urls else None
 
             url = f"https://www.immobilier.nc/details/{item_id}"
-            if photo_url:
-                desc = f"[IMG: {photo_url}] {desc}"
-
             facilities = item.get("facilities") if isinstance(item.get("facilities"), list) else None
             published_dt = parse_datetime_safe(item.get("published_at") or item.get("created_at"))
             created_dt = parse_datetime_safe(item.get("created_at"))
@@ -249,6 +358,9 @@ class LiveNCScraper:
                 image_url=photo_url or None,
                 images_json=images_json,
                 facilities=facilities,
+                raw_charges=raw_charges_api,
+                complementary_details=api_comp_details if api_comp_details else None,
+                direct_phone=owner_phone,
                 published_at=published_dt,
                 created_at_declared=created_dt,
                 extracted_at=datetime.now(timezone.utc),
@@ -258,7 +370,7 @@ class LiveNCScraper:
             return None
 
     def fetch_yatoo_raw_items(self, category: str = "ventes-immobilieres", limit: int = 50, page: int = 1) -> List[Dict[str, Any]]:
-        """Interroge l'API GraphQL native de Yatoo.nc pour extraire les petites annonces immobilières."""
+        """Interroge l'API GraphQL native de Yatoo.nc pour extraire les petites annonces immobilières (avec mobile & media)."""
         query = """
         query getSearchPosts($queryVariables: searchParams) {
           searchPosts(searchParams: $queryVariables) {
@@ -273,6 +385,7 @@ class LiveNCScraper:
               category
               town
               description
+              mobile
               createdAt
               updatedAt
               userName
@@ -315,8 +428,8 @@ class LiveNCScraper:
             if not item_id or item_id.lower() == "none":
                 return None
 
-            title = str(item.get("title") or "Annonce Immobilière Yatoo").strip()
-            desc = str(item.get("description") or "").strip()
+            title = _clean_html_and_cp1252(item.get("title") or "Annonce Immobilière Yatoo")
+            desc = _clean_html_and_cp1252(item.get("description") or "")
             town = str(item.get("town") or "").strip()
             raw_price = item.get("price")
             is_loc = "locat" in category.lower() or "louer" in title.lower() or "loyer" in desc.lower()
@@ -330,29 +443,39 @@ class LiveNCScraper:
                 except (ValueError, TypeError):
                     price_str = str(raw_price)
 
-            # Photos Yatoo (photos + media fallback)
+            # Photos Yatoo (photos + media fallback : gère dict, liste de dicts, URLs brutes et thumbnails)
             photos = item.get("photos") or []
             media_items = item.get("media") or []
+            if isinstance(media_items, str):
+                try:
+                    media_items = json.loads(media_items)
+                except Exception:
+                    media_items = [media_items] if media_items.startswith("http") else []
             photo_urls = []
             for p in (photos if isinstance(photos, list) else []) + (media_items if isinstance(media_items, list) else []):
                 if isinstance(p, dict):
-                    u = str(p.get("contentUrl") or p.get("url") or p.get("src") or "").strip()
+                    u = str(p.get("contentUrl") or p.get("url") or p.get("src") or p.get("secure_url") or "").strip()
                     if not u:
                         thumbs = p.get("thumbnail") or []
-                        if thumbs and isinstance(thumbs, list) and isinstance(thumbs[0], dict):
-                            u = str(thumbs[0].get("contentUrl") or "").strip()
-                    if u and u.startswith("http") and u not in photo_urls:
+                        if isinstance(thumbs, dict):
+                            u = str(thumbs.get("contentUrl") or thumbs.get("url") or "").strip()
+                        elif thumbs and isinstance(thumbs, list) and isinstance(thumbs[0], dict):
+                            u = str(thumbs[0].get("contentUrl") or thumbs[0].get("url") or "").strip()
+                    if u and u.startswith("http") and "unsplash.com" not in u and u not in photo_urls:
                         photo_urls.append(u)
-                elif isinstance(p, str) and p.strip().startswith("http") and p.strip() not in photo_urls:
+                elif isinstance(p, str) and p.strip().startswith("http") and "unsplash.com" not in p and p.strip() not in photo_urls:
                     photo_urls.append(p.strip())
 
             photo_url = photo_urls[0] if photo_urls else ""
             images_json = json.dumps(photo_urls) if photo_urls else None
+            mobile_phone = _normalize_phone_nc_simple(item.get("mobile"))
 
             # Inférence du type de bien
             lower_text = f"{title} {desc}".lower()
             if "dock" in lower_text or "entrepot" in lower_text or "entrepôt" in lower_text:
                 prop_type = "Dock"
+            elif any(k in lower_text for k in ("local commercial", "bureau", "bureaux", "commerce", "boutique")):
+                prop_type = "Local commercial"
             elif "terrain" in lower_text:
                 prop_type = "Terrain"
             elif "appartement" in lower_text or "f1" in lower_text or "f2" in lower_text or "f3" in lower_text or "studio" in lower_text:
@@ -362,8 +485,6 @@ class LiveNCScraper:
 
             sid = item.get("sid") or item_id
             url = f"https://yatoo.nc/annonces/{category}/{sid}"
-            if photo_url:
-                desc = f"[IMG: {photo_url}] {desc}"
 
             agency_name = resolve_agency_name(
                 raw_name=item.get("userName"),
@@ -388,6 +509,7 @@ class LiveNCScraper:
                 agency_name=agency_name,
                 image_url=photo_url or None,
                 images_json=images_json,
+                direct_phone=mobile_phone,
                 published_at=pub_dt,
                 extracted_at=datetime.now(timezone.utc),
             )
@@ -442,7 +564,7 @@ class LiveNCScraper:
             is_loc = deal_type.lower() == "location" or "location" in deal_type.lower()
 
             photo_fn = item.get("property_photo")
-            photo_url = f"https://immonc.com/photos/photos_big/{photo_fn}" if photo_fn else None
+            photo_url = _canonicalize_immonc_photo(f"https://www.immonc.com/photos/photos_big/{photo_fn}") if photo_fn else None
 
             url = item.get("property_url") or f"https://www.immonc.com/annonce/{deal_type}/{item_id}"
 
@@ -627,7 +749,7 @@ class LiveNCScraper:
             facs.append("ascenseur")
         rl.facilities = facs if facs else None
 
-        # 5. Photos HD additionnelles
+        # 5. Photos HD additionnelles (normalisées & dédupliquées par nom de fichier — zéro x3)
         if detail.get("photos"):
             existing_photos = []
             if rl.images_json:
@@ -635,13 +757,10 @@ class LiveNCScraper:
                     existing_photos = json.loads(rl.images_json)
                 except Exception:
                     existing_photos = []
-            for p in detail["photos"]:
-                if p not in existing_photos:
-                    existing_photos.append(p)
-            if existing_photos:
-                rl.images_json = json.dumps(existing_photos)
-                if not rl.image_url:
-                    rl.image_url = existing_photos[0]
+            merged_photos = _dedup_immonc_photos(list(detail["photos"]) + list(existing_photos))
+            if merged_photos:
+                rl.images_json = json.dumps(merged_photos)
+                rl.image_url = merged_photos[0]
 
         return rl
 
@@ -675,11 +794,9 @@ class LiveNCScraper:
             is_loc = deal_type.lower() == "location" or "location" in url.lower() or "loyer" in title.lower()
             price_str = f"{price_xpf} F CFP/mois" if is_loc else f"{price_xpf} F CFP"
 
-            photos = list(item.get("photos") or [])
-            if detail_data and detail_data.get("photos"):
-                for p in detail_data["photos"]:
-                    if p not in photos:
-                        photos.append(p)
+            photos = _dedup_immonc_photos(
+                list((detail_data.get("photos") if detail_data else None) or []) + list(item.get("photos") or [])
+            )
 
             photo_url = photos[0] if photos else None
             images_json = json.dumps(photos) if photos else None
@@ -718,7 +835,7 @@ class LiveNCScraper:
                 facs.append("climatisation")
             if "vue mer" in lower_text or "vue lagon" in lower_text or (detail_data and detail_data.get("has_sea_view")):
                 facs.append("vue_mer")
-            if "meubl" in lower_text and not ("non meubl" in lower_text or "non-meubl" in lower_text):
+            if re.search(r"\bmeubl[ée]e?s?\b", lower_text) and not re.search(r"\b(?:non[\s-]meubl[ée]|projection\s+meubl[ée]|home\s+staging)", lower_text):
                 facs.append("meuble")
             if detail_data and detail_data.get("has_elevator"):
                 facs.append("ascenseur")
@@ -783,7 +900,8 @@ class LiveNCScraper:
         self,
         max_pages: int = 10,
         include_rentals: bool = True,
-        hydrate_details: bool = True
+        hydrate_details: bool = True,
+        hydrate_all: bool = False,
     ) -> List[RawListing]:
         """
         Moissonnage massif et hybride d'Immo.nc :
@@ -835,16 +953,19 @@ class LiveNCScraper:
                     logger.warning(f"Erreur traitement page Immo.nc : {e}")
 
         # 3. Hydratation multithreadée des fiches détaillées pour zéro perte de données
-        # Inclure également toutes les offres de colocation issues du flux cartographique
-        coloc_geo_items = [
-            rl for sid, rl in listings_map.items()
-            if ("coloc" in (rl.title or "").lower() or "coloc" in (rl.url or "").lower())
-            and not any(p.source_id == sid for p in page_listings)
-        ]
-        items_to_hydrate = page_listings + coloc_geo_items
+        page_ids = {p.source_id for p in page_listings}
+        if hydrate_all:
+            extra_geo_items = [rl for sid, rl in listings_map.items() if sid not in page_ids]
+        else:
+            extra_geo_items = [
+                rl for sid, rl in listings_map.items()
+                if ("coloc" in (rl.title or "").lower() or "coloc" in (rl.url or "").lower())
+                and sid not in page_ids
+            ]
+        items_to_hydrate = page_listings + extra_geo_items
         if hydrate_details and items_to_hydrate:
-            logger.info(f"Hydratation haute fidélité de {len(items_to_hydrate)} annonces Immo.nc (dont {len(coloc_geo_items)} colocations)...")
-            with ThreadPoolExecutor(max_workers=8) as ex_hydr:
+            logger.info(f"Hydratation haute fidélité de {len(items_to_hydrate)} annonces Immo.nc (hydrate_all={hydrate_all})...")
+            with ThreadPoolExecutor(max_workers=10) as ex_hydr:
                 hydrated_results = list(ex_hydr.map(self.hydrate_raw_listing, items_to_hydrate))
         else:
             hydrated_results = items_to_hydrate
@@ -869,9 +990,16 @@ class LiveNCScraper:
                     existing.direct_negotiator = rl.direct_negotiator
                 if rl.direct_phone:
                     existing.direct_phone = rl.direct_phone
-                if rl.images_json and len(rl.images_json) > len(existing.images_json or ""):
-                    existing.images_json = rl.images_json
-                    existing.image_url = rl.image_url
+                if rl.images_json:
+                    try:
+                        ex_imgs = json.loads(existing.images_json) if existing.images_json else []
+                        new_imgs = json.loads(rl.images_json)
+                        merged_imgs = _dedup_immonc_photos(list(new_imgs) + list(ex_imgs))
+                        if merged_imgs:
+                            existing.images_json = json.dumps(merged_imgs)
+                            existing.image_url = merged_imgs[0]
+                    except Exception:
+                        pass
                 if rl.facilities:
                     existing.facilities = rl.facilities
             else:
@@ -880,6 +1008,221 @@ class LiveNCScraper:
         all_listings = list(listings_map.values())
         logger.info(f"=== MOISSONNAGE IMMO.NC TERMINE : {len(all_listings)} annonces complètes prêtes pour ingestion ===")
         return all_listings
+
+    def fetch_yatoo_post_by_id(self, item_id: str) -> Optional[Dict[str, Any]]:
+        """Récupère une annonce Yatoo.nc individuelle par id ou sid (pour réconciliation live)."""
+        query = """
+        query getPost($id: String!) {
+          post(id: $id) {
+            id
+            sid
+            status
+            deleted
+            title
+            description
+            price
+            town
+            category
+            media
+            photos
+            mobile
+            userName
+            createdAt
+            updatedAt
+          }
+        }
+        """
+        try:
+            resp = requests.post(
+                self.YATOO_GRAPHQL_URL,
+                json={"operationName": "getPost", "variables": {"id": item_id}, "query": query},
+                headers=self.HEADERS_YATOO,
+                timeout=10,
+                verify=False,
+            )
+            if resp.status_code != 200:
+                return None
+            payload = resp.json()
+            return (payload.get("data") or {}).get("post")
+        except Exception:
+            return None
+
+    def reconcile_active_listings(self, max_workers: int = 12, hydrate_immonc_stubs: bool = True) -> Dict[str, Any]:
+        """
+        Réconcilie en direct TOUTES les annonces actives en base contre les 4 portails sources :
+        - Passe en is_active=FALSE les annonces supprimées / expirées (HTTP 404 / deleted=true).
+        - Rafraîchit les annonces modifiées (prix, description propre sans HTML, owner.phone, champs API).
+        - Hydrate 100 % des coquilles ImmoNC et déduplique les photos x3.
+        - Récupère les vraies photos media et mobiles GraphQL sur Yatoo.nc.
+        """
+        df = self.db.query("""
+            SELECT id, source, source_id, url, title, description, price_xpf,
+                   transaction_type, agency_name, images_json, complementary_details_json
+            FROM listings
+            WHERE is_active = TRUE
+        """)
+        rows = df.to_dict(orient="records")
+        logger.info(f"=== RECONCILIATION LIVE DEMARREE SUR {len(rows)} ANNONCES ACTIVES ===")
+
+        expired_ids: List[str] = []
+        refreshed_raw: List[RawListing] = []
+        stats = {"checked": len(rows), "expired": 0, "refreshed": 0, "errors": 0, "by_source": {}}
+
+        def _check_row(row: Dict[str, Any]):
+            lid = str(row["id"])
+            src = str(row["source"]).lower()
+            sid = str(row["source_id"])
+            url = str(row.get("url") or "")
+            try:
+                if src in ("immobilier.nc", "bienmeloger.nc"):
+                    r = requests.get(
+                        f"{self.API_POSTS_URL}/{sid}",
+                        headers=self.HEADERS_IMMO_NC,
+                        timeout=12,
+                        verify=False,
+                    )
+                    if r.status_code in (404, 410):
+                        return ("expired", lid, src, None)
+                    if r.status_code == 200:
+                        data = (r.json() or {}).get("data")
+                        if not data:
+                            return ("expired", lid, src, None)
+                        rl = self.parse_item_to_raw_listing(data, default_source=src)
+                        if rl:
+                            # Préserver la source exacte d'origine (évite changement d'ID immobilier.nc <-> bienmeloger.nc)
+                            rl.source = src
+                            return ("refresh", lid, src, rl)
+                    return ("ok", lid, src, None)
+
+                elif src == "yatoo.nc":
+                    post = self.fetch_yatoo_post_by_id(sid)
+                    if not post:
+                        # Fallback par sid court extrait de l'URL
+                        short_sid = url.rstrip("/").rsplit("/", 1)[-1] if url else ""
+                        if short_sid and short_sid != sid:
+                            post = self.fetch_yatoo_post_by_id(short_sid)
+                    if not post or post.get("deleted") is True or str(post.get("status") or "").lower() in ("deleted", "expired", "archived"):
+                        return ("expired", lid, src, None)
+                    cat = str(post.get("category") or ("locations" if "locations" in url else "ventes-immobilieres"))
+                    rl = self.parse_yatoo_item_to_raw_listing(post, category=cat)
+                    if rl:
+                        rl.source_id = sid
+                        return ("refresh", lid, src, rl)
+                    return ("ok", lid, src, None)
+
+                elif src == "immonc":
+                    if not url:
+                        return ("ok", lid, src, None)
+                    r = requests.get(url, headers=self.HEADERS_IMMONC, timeout=14, verify=False)
+                    if r.status_code in (404, 410):
+                        return ("expired", lid, src, None)
+                    if r.status_code == 200:
+                        try:
+                            raw_html = r.content.decode("utf-8")
+                        except Exception:
+                            raw_html = r.content.decode("windows-1252", errors="ignore")
+                        low_html = raw_html.lower()
+                        if len(raw_html) < 4500 or "annonce introuvable" in low_html or "n'existe plus" in low_html:
+                            return ("expired", lid, src, None)
+
+                        detail = parse_immonc_detail_html(raw_html, url=url)
+                        # Extraire agence réelle & localisation depuis le HTML détail si présent
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(raw_html, "html.parser")
+                        h1 = soup.find("h1")
+                        live_title = _clean_html_and_cp1252(h1.get_text(" ", strip=True)) if h1 else str(row.get("title") or "")
+                        if not live_title or len(live_title) < 3:
+                            live_title = str(row.get("title") or "Bien immobilier")
+
+                        ag_name_raw = ""
+                        ag_input = soup.find("input", id=re.compile(r"^ad_username"))
+                        if ag_input and ag_input.get("value"):
+                            ag_name_raw = ag_input.get("value").strip()
+                        if not ag_name_raw:
+                            ag_link = soup.find("a", title=re.compile(r"Voir les annonces de", re.I))
+                            if ag_link and ag_link.get("title"):
+                                ag_name_raw = re.sub(r"^Voir les annonces de\s+", "", ag_link["title"], flags=re.I).strip()
+                        if not ag_name_raw:
+                            part_box = soup.find("div", class_=re.compile(r"agency|agent|partenaire|vendeur", re.I))
+                            if part_box:
+                                h_ag = part_box.find(["h3", "h4", "strong", "a"])
+                                if h_ag:
+                                    ag_name_raw = h_ag.get_text(" ", strip=True)
+
+                        ag_email_raw = ""
+                        em_input = soup.find("input", id=re.compile(r"^ag_email"))
+                        if em_input and em_input.get("value"):
+                            ag_email_raw = em_input.get("value").strip()
+
+                        deal_slug = "location" if "/location/" in url.lower() else "vente"
+                        is_loc = deal_slug == "location"
+                        price_xpf = int(row.get("price_xpf") or 0)
+                        # Vérifier le prix live sur la page HTML
+                        price_el = soup.find(class_=re.compile(r"venderprice|listing-price|prix", re.I))
+                        if price_el:
+                            p_digits = re.sub(r"[^\d]", "", price_el.get_text(" ", strip=True))
+                            if p_digits and int(p_digits) >= 10_000:
+                                price_xpf = int(p_digits)
+
+                        # Localisation dans le slug URL ou breadcrumb
+                        loc_hint = ""
+                        m_slug = re.search(r"/annonce/[^/]+/[^/]+/([^/]+?)-\d+$", url)
+                        if m_slug:
+                            loc_hint = m_slug.group(1).replace("-", " ")
+
+                        existing_imgs = []
+                        try:
+                            if row.get("images_json"):
+                                existing_imgs = json.loads(str(row["images_json"]))
+                        except Exception:
+                            existing_imgs = []
+
+                        item_dict = {
+                            "id": sid,
+                            "url": url,
+                            "title": live_title,
+                            "location_raw": loc_hint,
+                            "price_xpf": price_xpf,
+                            "description": detail.get("full_description") or str(row.get("description") or ""),
+                            "agency_name": ag_name_raw or ("" if str(row.get("agency_name") or "") == "Bien-Immo" else str(row.get("agency_name") or "")),
+                            "agency_email": ag_email_raw,
+                            "photos": _dedup_immonc_photos(list(detail.get("photos") or []) + list(existing_imgs)),
+                            "deal_type": deal_slug,
+                        }
+                        rl = self.parse_immonc_item_to_raw_listing(item_dict, deal_type=deal_slug, detail_data=detail)
+                        if rl:
+                            return ("refresh", lid, src, rl)
+                    return ("ok", lid, src, None)
+            except Exception as exc:
+                return ("error", lid, src, str(exc))
+            return ("ok", lid, src, None)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            results = list(ex.map(_check_row, rows))
+
+        for status, lid, src, payload in results:
+            bs = stats["by_source"].setdefault(src, {"checked": 0, "expired": 0, "refreshed": 0, "errors": 0})
+            bs["checked"] += 1
+            if status == "expired":
+                expired_ids.append(lid)
+                stats["expired"] += 1
+                bs["expired"] += 1
+            elif status == "refresh" and payload is not None:
+                refreshed_raw.append(payload)
+                stats["refreshed"] += 1
+                bs["refreshed"] += 1
+            elif status == "error":
+                stats["errors"] += 1
+                bs["errors"] += 1
+
+        if expired_ids:
+            self.db.mark_listings_inactive(expired_ids)
+        if refreshed_raw:
+            etl_res = self.pipeline.process_and_store(refreshed_raw, batch_tag="live_reconciliation")
+            stats["etl"] = etl_res
+
+        logger.info(f"=== RECONCILIATION TERMINEE : {stats['expired']} expirées, {stats['refreshed']} rafraîchies, {stats['errors']} erreurs ===")
+        return stats
 
     def run_live_sync(
         self,
