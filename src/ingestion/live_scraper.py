@@ -1230,17 +1230,19 @@ class LiveNCScraper:
         include_rentals: bool = True,
         include_yatoo: bool = True,
         include_immonc: bool = True,
-        source_filter: Optional[str] = None
+        source_filter: Optional[str] = None,
+        run_quality_control: bool = True,
+        run_canary: bool = True,
+        reconcile_404: bool = False,
     ) -> Dict[str, Any]:
         """
-        Exécute la synchronisation en direct multi-sources complète :
+        Exécute la synchronisation en direct multi-sources complète avec contrôle qualité automatique :
         1. Télécharge les ventes et locations depuis api.immobilier.nc (Fédération des 52 agences NC)
-        2. Télécharge les petites annonces en direct depuis Yatoo.nc (GraphQL)
-        3. Moissonnage massif d'Immo.nc (immonc.com - 1 450+ annonces réelles)
-        4. Convertit et valide via RawListing
-        5. Traite via IngestionPipeline (Cleaner + Enricher)
-        6. Stocke/met à jour dans DuckDB
-        7. Effectue l'audit de qualité et de santé du système
+        2. Télécharge les petites annonces en direct depuis Yatoo.nc (GraphQL avec media + mobile)
+        3. Moissonnage massif d'Immo.nc (hydratation complète + photos dédupliquées)
+        4. Convertit et valide via RawListing -> IngestionPipeline (Cleaner + Enricher -> DuckDB)
+        5. Exécute SYSTÉMATIQUEMENT le contrôle qualité post-import :
+           assainissement, REFIL/Cadastre, cache sémantique v4.1, Canari live (20 fiches), Quality Gate PASS/WARN/BLOCK
         """
         start_time = datetime.now(timezone.utc)
         logger.info(f"=== DEMARRAGE DU SCAN MULTI-SOURCES REEL (Pages: 1 à {max_pages}) ===")
@@ -1249,7 +1251,6 @@ class LiveNCScraper:
 
         # 1. SCAN DE LA PASSERELLE CENTRALE NC (IMMOBILIER.NC / BIENMELOGER.NC - 52 AGENCES)
         if not source_filter or "immobilier" in source_filter.lower() or "bienmeloger" in source_filter.lower():
-            # A. VENTES
             for page in range(1, max_pages + 1):
                 items = self.fetch_live_raw_items(deal_type="vente", page=page)
                 for it in items:
@@ -1257,7 +1258,6 @@ class LiveNCScraper:
                     if rl:
                         all_raw_listings.append(rl)
 
-            # B. LOCATIONS
             if include_rentals:
                 rental_pages = max(2, min(max_pages, 10))
                 for page in range(1, rental_pages + 1):
@@ -1291,17 +1291,42 @@ class LiveNCScraper:
 
         logger.info(f"Total annonces brutes collectées prêtes pour ETL : {len(all_raw_listings)}")
 
-        # 3. Exécution du pipeline d'ingestion vers DuckDB
-        etl_result = self.pipeline.process_and_store(all_raw_listings, batch_tag="live_multi_sync")
+        # 4. Exécution du pipeline d'ingestion vers DuckDB (le contrôle global complet tourne immédiatement après)
+        etl_result = self.pipeline.process_and_store(
+            all_raw_listings,
+            batch_tag="live_multi_sync",
+            auto_quality_control=False,
+        )
 
-        # 4. Exécution de l'audit de santé
+        # Optionnel : réconciliation live 404 complète si demandée
+        reconciliation_stats = None
+        if reconcile_404:
+            reconciliation_stats = self.reconcile_active_listings(max_workers=12)
+
+        # 5. Contrôle Qualité Automatique Systématique (Sanitize + REFIL/Cadastre + Cache v4.1 + Canari + Quality Gate)
+        quality_control = None
+        if run_quality_control:
+            try:
+                from src.quality.post_import_controller import run_post_import_control
+                quality_control = run_post_import_control(
+                    db=self.db,
+                    listing_ids=None,
+                    batch_tag=f"live_sync_{source_filter or 'all'}",
+                    run_geo=True,
+                    rebuild_ai_cache=True,
+                    run_canary=run_canary,
+                    canary_per_portal=5,
+                    save_report=True,
+                )
+            except Exception as exc:
+                logger.warning(f"Erreur lors du contrôle qualité automatique post-sync : {exc}")
+
+        # 6. Exécution de l'audit de santé logs/DB
         audit_summary = self.auditor.run_full_audit()
         duration_sec = (datetime.now(timezone.utc) - start_time).total_seconds()
 
-        # 5. Compte total actuel en base
         total_in_db = self.db.query("SELECT COUNT(*) AS c FROM listings WHERE is_active=TRUE").iloc[0]["c"]
 
-        # Répartition par source
         source_breakdown = self.db.query("""
             SELECT source, COUNT(*) AS count
             FROM listings
@@ -1309,10 +1334,11 @@ class LiveNCScraper:
             GROUP BY source
         """).to_dict(orient="records")
 
+        gate_status = (quality_control or {}).get("gate_status", "PASS")
         logger.info(
             f"=== SCAN REEL TERMINE EN {duration_sec:.2f}s : "
             f"{etl_result['stored_cleaned']} traitées/insérées, "
-            f"Total actif DuckDB : {total_in_db} annonces. Statut audit : {audit_summary.get('status')} ==="
+            f"Total actif DuckDB : {total_in_db} annonces. Quality Gate : {gate_status} ==="
         )
 
         return {
@@ -1325,6 +1351,9 @@ class LiveNCScraper:
             "sources_summary": source_breakdown,
             "audit_status": audit_summary.get("status", "HEALTHY"),
             "audit_summary": audit_summary,
+            "quality_gate_status": gate_status,
+            "quality_control": quality_control,
+            "reconciliation": reconciliation_stats,
         }
 
 

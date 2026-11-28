@@ -1,12 +1,12 @@
 @echo off
-title Pipeline Data & Evaluation Immobiliere - Grand Noumea
+title Pipeline Data, Import Multi-Sources & Quality Gate - Sentinel ImmoNC
 echo ============================================================
-echo   EXECUTION DU PIPELINE COMPLET GRAND NOUMEA
+echo   SYNCHRONISATION MULTI-PORTAILS + CONTROLE QUALITE AUTO
 echo ============================================================
 echo.
-.venv\Scripts\python.exe main.py
+.venv\Scripts\python.exe main.py --sync-live --audit
 echo.
 echo ============================================================
-echo   EXECUTION TERMINEE
+echo   EXECUTION TERMINEE (Rapport: logs\quality_gate_last.json)
 echo ============================================================
 pause

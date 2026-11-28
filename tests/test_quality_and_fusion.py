@@ -150,3 +150,69 @@ def test_quality_gate_quarantines_p0_and_scores_clean_listing():
     assert len(quar) == 1 and "HORS_PERIMETRE_RECHERCHE_OU_OBJET" in quar[0]["quarantineReasons"]
     assert rep["summary"]["publishedCount"] == 1
     assert rep["summary"]["quarantinedCount"] == 1
+
+
+def test_auto_quality_control_runs_on_every_import(tmp_path):
+    """Vérifie que IngestionPipeline.process_and_store exécute systématiquement le contrôle qualité post-import."""
+    from src.storage.database import PropertyDatabase
+    from src.ingestion.collector import IngestionPipeline
+    from src.quality.post_import_controller import run_post_import_control
+
+    db = PropertyDatabase(db_path=tmp_path / "test_auto_qc.duckdb")
+    pipe = IngestionPipeline(db=db)
+
+    raw_batch = [
+        RawListing(
+            source="immonc",
+            source_id="9001",
+            url="https://www.immonc.com/annonce/vente/appartement-f3/noumea-anse-vata-9001",
+            title="Appartement F3 Anse Vata",
+            description="Bel appartement F3 de 82 m² au premier étage avec deux salles d'eau, varangue 18 m² et vue mer. Contact : 78.12.34.",
+            raw_price="34 000 000 F CFP",
+            raw_surface="82",
+            raw_rooms="F3",
+            raw_location="Nouméa - Anse Vata",
+            transaction_type_declared="Vente",
+            property_type_declared="Appartement",
+            agency_name="Chatelin Immobilier",
+            image_url="https://immonc.com/photos/photos_big/photo1.jpg",
+            images_json='["https://immonc.com/photos/photos_big/photo1.jpg", "https://www.immonc.com/photos/photos_vignette/photo1.jpg"]',
+        ),
+        RawListing(
+            source="yatoo.nc",
+            source_id="9002",
+            url="https://yatoo.nc/annonces/ventes-immobilieres/9002",
+            title="Vendre table de séjour",
+            description="Table en bois massif 6 personnes.",
+            raw_price="45 000 F CFP",
+            raw_location="Nouméa",
+        ),
+    ]
+
+    res = pipe.process_and_store(raw_batch, batch_tag="unit_auto_qc")
+    # L'objet hors-périmètre est rejeté dès l'import
+    assert res["stored_cleaned"] == 1
+    assert res["rejected"] == 1
+    # Le contrôle qualité automatique s'est exécuté systématiquement
+    qc = res["quality_control"]
+    assert qc is not None
+    assert qc["gate_status"] in ("PASS", "WARN")
+    assert qc["sanitization"]["sanitized"] == 1
+    assert qc["ai_cache_updated"] == 1
+
+    # Vérifier la déduplication photos, SDB=2, étage canonique et cache v4.1 en base
+    row = db.query("SELECT bathrooms, etage, images_json FROM listings WHERE id = 'immonc_9001'").iloc[0]
+    assert int(row["bathrooms"]) == 2
+    assert row["etage"] == "1er étage"
+    import json
+    assert len(json.loads(row["images_json"])) == 1
+    cache_cnt = int(db.query("SELECT COUNT(*) AS c FROM listing_ai_enrichment WHERE listing_id = 'immonc_9001'").iloc[0]["c"])
+    assert cache_cnt == 1
+
+    # Vérifier l'archivage du rapport horodaté sur run_post_import_control
+    log_dir = tmp_path / "logs"
+    qc2 = run_post_import_control(db=db, batch_tag="unit_full", run_geo=False, rebuild_ai_cache=True, run_canary=False, save_report=True, log_dir=log_dir)
+    assert (log_dir / "quality_gate_last.json").exists()
+    assert (log_dir / "quality_gate_history.jsonl").exists()
+    assert qc2["summary"]["publishedCount"] == 1
+

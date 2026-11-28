@@ -197,6 +197,8 @@ def run_investment_simulation(prix: Optional[int] = None, loyer: Optional[int] =
 def main():
     parser = argparse.ArgumentParser(description="Plateforme Data & Decision Immobiliere Grand Noumea")
     parser.add_argument("--ingest-sample", action="store_true", help="Ingerer le jeu d'annonces pilotes du Grand Noumea")
+    parser.add_argument("--sync-live", action="store_true", help="Synchroniser les 4 portails en direct avec controle qualite automatique")
+    parser.add_argument("--reconcile", action="store_true", help="Activer la reconciliation live 404/supprimees lors du --sync-live")
     parser.add_argument("--report", action="store_true", help="Afficher le rapport de synthese du marche")
     parser.add_argument("--stats", action="store_true", help="Afficher les percentiles et opportunités decotees")
     parser.add_argument("--map", action="store_true", help="Generer la carte interactive HTML Folium")
@@ -222,7 +224,7 @@ def main():
     args = parser.parse_args()
 
     # Si aucun argument n'est fourni, on exécute une démonstration complète avec audit
-    if not any([args.ingest_sample, args.report, args.stats, args.map, args.estimate, args.simulate_invest, args.audit]):
+    if not any([args.ingest_sample, args.sync_live, args.report, args.stats, args.map, args.estimate, args.simulate_invest, args.audit]):
         args.ingest_sample = True
         args.report = True
         args.stats = True
@@ -235,12 +237,38 @@ def main():
     db = PropertyDatabase()
     pipeline = IngestionPipeline(db)
 
+    if args.sync_live:
+        from src.ingestion.live_scraper import LiveNCScraper
+        console = Console()
+        console.print("[bold blue]>> Synchronisation live multi-portails + Controle Qualite Automatique...[/bold blue]")
+        scraper = LiveNCScraper(db=db)
+        res = scraper.run_live_sync(
+            max_pages=10,
+            include_rentals=True,
+            include_yatoo=True,
+            include_immonc=True,
+            run_quality_control=True,
+            run_canary=True,
+            reconcile_404=args.reconcile,
+        )
+        qc = res.get("quality_control") or {}
+        console.print(
+            f"[green]OK: Sync terminee ({res['stored_cleaned']} traitees, total actif {res['total_in_db']}) | "
+            f"Quality Gate: {res.get('quality_gate_status')} | "
+            f"Score: {(qc.get('summary') or {}).get('avgScore')}/100 | "
+            f"Canari Live: {qc.get('canary_freshness_pct')}%[/green]"
+        )
+
     if args.ingest_sample:
         console = Console()
         console.print("[bold blue]>> Ingestion pilote Grand Noumea...[/bold blue]")
         pilot_data = get_pilot_dataset()
         stats = pipeline.process_and_store(pilot_data, batch_tag="pilot")
-        console.print(f"[green]OK: Ingestion reussie : {stats['stored_cleaned']} annonces en base DuckDB.[/green]")
+        qc = stats.get("quality_control") or {}
+        console.print(
+            f"[green]OK: Ingestion reussie : {stats['stored_cleaned']} annonces en base DuckDB "
+            f"(Quality Gate: {qc.get('gate_status', 'PASS')}, Score: {(qc.get('summary') or {}).get('avgScore')}/100).[/green]"
+        )
         logger.info(f"Ingestion pilote terminée : {stats['stored_cleaned']} annonces insérées/mises à jour.")
 
     if args.report:

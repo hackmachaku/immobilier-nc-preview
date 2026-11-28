@@ -1889,24 +1889,42 @@ class NCImmoAPIHandler(SimpleHTTPRequestHandler):
 
         invalidate_listings_cache()
 
-        # Exporte les snapshots statiques et préchauffe le cache en arrière-plan
+        # Exporte les snapshots statiques via Publish Guard (staging -> validation Quality Gate -> swap atomique)
         def _sync_static_files():
             try:
                 import urllib.request
-                for ep, fp in [
+                staged = []
+                endpoints = [
                     (f"http://127.0.0.1:{PORT}/api/listings", BASE_DIR / "data_listings.json"),
                     (f"http://127.0.0.1:{PORT}/api/sources", BASE_DIR / "data_sources.json"),
                     (f"http://127.0.0.1:{PORT}/api/agencies", BASE_DIR / "data_agencies.json"),
-                ]:
-                    try:
-                        with urllib.request.urlopen(ep, timeout=15) as resp:
-                            data = resp.read()
-                            with open(fp, "wb") as f:
-                                f.write(data)
-                    except Exception as ex:
-                        logger.warning(f"Erreur sync static file {fp.name}: {ex}")
+                    (f"http://127.0.0.1:{PORT}/api/quality", BASE_DIR / "data_quality.json"),
+                ]
+                for ep, fp in endpoints:
+                    with urllib.request.urlopen(ep, timeout=45) as resp:
+                        data = resp.read()
+                    parsed = json.loads(data.decode("utf-8"))
+                    if not isinstance(parsed, dict) or parsed.get("success") is False:
+                        raise ValueError(f"Payload invalide depuis {ep}")
+                    sp = fp.with_suffix(".staging.json")
+                    sp.write_bytes(data)
+                    staged.append((sp, fp))
+
+                # Bloquer la publication si le Quality Gate est BLOCK (préserve le dernier snapshot sain N-1)
+                q_stage = BASE_DIR / "data_quality.staging.json"
+                if q_stage.exists():
+                    q_data = (json.loads(q_stage.read_text(encoding="utf-8")) or {}).get("data") or {}
+                    if str(q_data.get("gateStatus") or "").upper() == "BLOCK":
+                        logger.error(f"[PUBLISH GUARD BLOCKED] Snapshots N-1 conservés : {q_data.get('blockReasons')}")
+                        for sp, _ in staged:
+                            sp.unlink(missing_ok=True)
+                        return
+
+                for sp, fp in staged:
+                    os.replace(sp, fp)
+                logger.info("Snapshots statiques validés par Quality Gate et publiés en swap atomique.")
             except Exception as e:
-                logger.warning(f"Erreur lors de la synchronisation statique : {e}")
+                logger.warning(f"Erreur lors de la synchronisation statique sécurisée : {e}")
 
         threading.Thread(target=_sync_static_files, daemon=True).start()
 
